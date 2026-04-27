@@ -1,0 +1,221 @@
+name: jira-dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      jira_issue_key:
+        required: true
+        type: string
+      request_type:
+        required: true
+        type: string
+      subscription_owner_email:
+        required: true
+        type: string
+      subscription_admin_email:
+        required: false
+        type: string
+      notification_email_1:
+        required: true
+        type: string
+      notification_email_2:
+        required: true
+        type: string
+      budget:
+        required: true
+        type: string
+      budget_alert_enabled:
+        required: true
+        type: string
+      billing_company:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      configuration_pattern:
+        required: true
+        type: string
+      custom_vnet_cidr:
+        required: false
+        type: string
+      custom_private_subnet_cidr:
+        required: false
+        type: string
+      custom_protect_subnet_cidr:
+        required: false
+        type: string
+      custom_appgw_subnet_cidr:
+        required: false
+        type: string
+      service_name:
+        required: true
+        type: string
+      service_short_name:
+        required: true
+        type: string
+
+concurrency:
+  group: jira-dispatch-${{ inputs.jira_issue_key }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Derive variables
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RAW_COMPANY='${{ inputs.billing_company }}'
+          SERVICE_NAME='${{ inputs.service_name }}'
+          ENV_RAW='${{ inputs.environment }}'
+
+          BILLING_COMPANY_NAME=$(echo "$RAW_COMPANY" | sed -E 's/（[^）]+）$//')
+          BILLING_COMPANY_CODE=$(echo "$RAW_COMPANY" | sed -E 's/^.*（([^）]+)）$/\1/')
+
+          case "$ENV_RAW" in
+            "本番環境")
+              ENV_CODE="prod"
+              MANAGEMENT_GROUP_ID="Producrion"
+              ;;
+            "検証(ステージング)環境")
+              ENV_CODE="stg"
+              MANAGEMENT_GROUP_ID="Staging"
+              ;;
+            "開発(サンドボックス)環境")
+              ENV_CODE="dev"
+              MANAGEMENT_GROUP_ID="Sandbox"
+              ;;
+            *)
+              ENV_CODE="$ENV_RAW"
+              MANAGEMENT_GROUP_ID="$ENV_RAW"
+              ;;
+          esac
+
+          SUBSCRIPTION_NAME="subscription_${ENV_CODE}_${BILLING_COMPANY_CODE}_${SERVICE_NAME}"
+          FILE_NAME="${SUBSCRIPTION_NAME}.yaml"
+          BRANCH_NAME="feature/${{ inputs.jira_issue_key }}-subscription-request"
+
+          echo "billing_company_name=$BILLING_COMPANY_NAME" >> "$GITHUB_OUTPUT"
+          echo "billing_company_code=$BILLING_COMPANY_CODE" >> "$GITHUB_OUTPUT"
+          echo "env_code=$ENV_CODE" >> "$GITHUB_OUTPUT"
+          echo "management_group_id=$MANAGEMENT_GROUP_ID" >> "$GITHUB_OUTPUT"
+          echo "subscription_name=$SUBSCRIPTION_NAME" >> "$GITHUB_OUTPUT"
+          echo "file_name=$FILE_NAME" >> "$GITHUB_OUTPUT"
+          echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Generate subscriptions yaml
+        shell: bash
+        run: |
+          mkdir -p subscriptions
+          cat > "subscriptions/${{ steps.vars.outputs.file_name }}" <<EOF
+          display_name: "${{ inputs.service_name }}"
+          workload_type: "Production"
+          management_group_id: "${{ steps.vars.outputs.management_group_id }}"
+          location: "japaneast"
+
+          tags:
+            environment: "${{ steps.vars.outputs.env_code }}"
+            cost_center: "${{ steps.vars.outputs.billing_company_name }}"
+            owner: "${{ inputs.subscription_owner_email }}"
+            billing_company_code: "${{ steps.vars.outputs.billing_company_code }}"
+
+          alert_contacts:
+            - name: "subscription-owner"
+              email_address: "${{ inputs.notification_email_1 }}"
+            - name: "subscription-owner2"
+              email_address: "${{ inputs.notification_email_2 }}"
+
+          rbac_assignments:
+            - "${{ inputs.subscription_owner_email }}"
+            - "${{ inputs.subscription_admin_email }}"
+
+          resource_groups:
+            network:
+              name: "rg-${{ inputs.service_name }}-network"
+              location: "japaneast"
+            application:
+              name: "rg-${{ inputs.service_name }}-app"
+              location: "japaneast"
+
+          virtual_network:
+            name: "vnet-${{ inputs.service_name }}"
+            resource_group_name: "rg-${{ inputs.service_name }}-network"
+            address_space: ["${{ inputs.custom_vnet_cidr }}"]
+            hub_peering_enabled: true
+            use_hub_gateway: true
+            subnets:
+              - name: "snet-private"
+                address_prefix: "${{ inputs.custom_private_subnet_cidr }}"
+              - name: "snet-protect"
+                address_prefix: "${{ inputs.custom_protect_subnet_cidr }}"
+              - name: "snet-appgw"
+                address_prefix: "${{ inputs.custom_appgw_subnet_cidr }}"
+
+          subscription_request:
+            jira_issue_key: "${{ inputs.jira_issue_key }}"
+            request_type: "${{ inputs.request_type }}"
+            subscription_name: "${{ steps.vars.outputs.subscription_name }}"
+            subscription_owner_email: "${{ inputs.subscription_owner_email }}"
+            subscription_admin_email: "${{ inputs.subscription_admin_email }}"
+            notification_email_1: "${{ inputs.notification_email_1 }}"
+            notification_email_2: "${{ inputs.notification_email_2 }}"
+            budget: "${{ inputs.budget }}"
+            budget_alert_enabled: "${{ inputs.budget_alert_enabled }}"
+            billing_company_raw: "${{ inputs.billing_company }}"
+            environment_raw: "${{ inputs.environment }}"
+            configuration_pattern: "${{ inputs.configuration_pattern }}"
+            service_short_name: "${{ inputs.service_short_name }}"
+          EOF
+
+      - name: Create pull request
+        id: cpr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "${{ inputs.jira_issue_key }}: add ${{ steps.vars.outputs.subscription_name }}"
+          branch: ${{ steps.vars.outputs.branch_name }}
+          base: main
+          title: "${{ inputs.jira_issue_key }}: add ${{ steps.vars.outputs.subscription_name }}"
+          body: |
+            ## 概要
+            JIRA申請からサブスクリプション定義YAMLを生成しました。
+
+            ## レビュー観点
+            - 命名規則: `${{ steps.vars.outputs.subscription_name }}`
+            - management_group_id: `${{ steps.vars.outputs.management_group_id }}`
+            - cost_center: `${{ steps.vars.outputs.billing_company_name }}`
+            - 個社名略称: `${{ steps.vars.outputs.billing_company_code }}`
+            - 環境コード: `${{ steps.vars.outputs.env_code }}`
+
+            ## 入力値
+            | 項目 | 値 |
+            |---|---|
+            | JIRA Key | `${{ inputs.jira_issue_key }}` |
+            | 申請種別 | `${{ inputs.request_type }}` |
+            | サービス名 | `${{ inputs.service_name }}` |
+            | サービス名略称 | `${{ inputs.service_short_name }}` |
+            | 環境 | `${{ inputs.environment }}` |
+            | 請求先会社 | `${{ inputs.billing_company }}` |
+            | 予算 | `${{ inputs.budget }}` |
+            | 予算アラート利用 | `${{ inputs.budget_alert_enabled }}` |
+            | 通知先1 | `${{ inputs.notification_email_1 }}` |
+            | 通知先2 | `${{ inputs.notification_email_2 }}` |
+
+            ## 生成ファイル
+            - `subscriptions/${{ steps.vars.outputs.file_name }}`
+
+          delete-branch: false
