@@ -132,6 +132,7 @@ jobs:
 
           mkdir -p subscriptions
           FILE="subscriptions/${{ steps.vars.outputs.file_name }}"
+          : > "$FILE"
 
           SUB_OWNER='${{ inputs.subscription_owner_email }}'
           SUB_ADMIN='${{ inputs.subscription_admin_email }}'
@@ -147,158 +148,156 @@ jobs:
             USE_HUB_GATEWAY="true"
           fi
 
-          {
-            cat <<EOF
-            subscription_name: "${{ steps.vars.outputs.subscription_name }}"
-            workload_type: "Production"
-            management_group_id: "${{ steps.vars.outputs.management_group_id }}"
-            location: "japaneast"
-            env_short_name: "${{ steps.vars.outputs.env_code }}"
+          cat <<EOF >> "$FILE"
+          subscription_name: "${{ steps.vars.outputs.subscription_name }}"
+          workload_type: "Production"
+          management_group_id: "${{ steps.vars.outputs.management_group_id }}"
+          location: "japaneast"
+          env_short_name: "${{ steps.vars.outputs.env_code }}"
 
-            tags:
-              environment: "${{ steps.vars.outputs.env_code }}"
-              cost_center: "${{ steps.vars.outputs.billing_company_name }}"
-              owner: "${{ inputs.subscription_owner_email }}"
-              deployed_by: "Terraform"
+          tags:
+            environment: "${{ steps.vars.outputs.env_code }}"
+            cost_center: "${{ steps.vars.outputs.billing_company_name }}"
+            owner: "${{ inputs.subscription_owner_email }}"
+            deployed_by: "Terraform"
 
-            alert_contacts:
-              - name: "subscription-owner"
-                email_address: "${{ inputs.notification_email_1 }}"
-              - name: "subscription-owner2"
-                email_address: "${{ inputs.notification_email_2 }}"
+          alert_contacts:
+            - name: "subscription-owner"
+              email_address: "${{ inputs.notification_email_1 }}"
+            - name: "subscription-owner2"
+              email_address: "${{ inputs.notification_email_2 }}"
 
+          budget: "${{ inputs.budget }}"
+
+          rbac_assignments:
+          EOF
+
+          printf '%s\n%s\n' "$SUB_OWNER" "$SUB_ADMIN" | awk 'NF && !seen[$0]++ { print "  - \"" $0 "\"" }' >> "$FILE"
+
+          cat <<EOF >> "$FILE"
+
+          resource_groups:
+            network:
+              name: "${RG_NETWORK_NAME}"
+              location: "japaneast"
+            application:
+              name: "${RG_ALERT_NAME}"
+              location: "japaneast"
+          EOF
+
+          case "$CONFIG_PATTERN" in
+            *"パターン①"*)
+              ;;
+
+            *"パターン②"*)
+              cat <<EOF >> "$FILE"
+
+          virtual_network:
+            name: "${VNET_NAME}"
+            resource_group_name: "${RG_NETWORK_NAME}"
+            address_space: ["/23"]
+            hub_peering_enabled: true
+            use_hub_gateway: ${USE_HUB_GATEWAY}
+            subnets:
+              - name: "ApplicationGatewaySubnet"
+                address_prefix: "/24"
+              - name: "AzureFirewallSubnet"
+                address_prefix: "/26"
+              - name: "PrivateSubnet"
+                address_prefix: "/26"
+              - name: "ProtectSubnet"
+                address_prefix: "/27"
+          EOF
+              ;;
+
+            *"パターン③"*)
+              cat <<EOF >> "$FILE"
+
+          virtual_network:
+            name: "${VNET_NAME}"
+            resource_group_name: "${RG_NETWORK_NAME}"
+            address_space: ["/23"]
+            hub_peering_enabled: true
+            use_hub_gateway: ${USE_HUB_GATEWAY}
+            subnets:
+              - name: "ApplicationGatewaySubnet"
+                address_prefix: "/24"
+              - name: "AzureFirewallSubnet"
+                address_prefix: "/26"
+              - name: "PrivateSubnet"
+                address_prefix: "/26"
+          EOF
+              ;;
+
+            *"パターン④"*)
+              cat <<EOF >> "$FILE"
+
+          virtual_network:
+            name: "${VNET_NAME}"
+            resource_group_name: "${RG_NETWORK_NAME}"
+            address_space: ["${{ inputs.custom_vnet_cidr }}"]
+            hub_peering_enabled: true
+            use_hub_gateway: ${USE_HUB_GATEWAY}
+            subnets:
+              - name: "ApplicationGatewaySubnet"
+                address_prefix: "${{ inputs.custom_appgw_subnet_cidr }}"
+              - name: "AzureFirewallSubnet"
+                address_prefix: "/26"
+              - name: "PrivateSubnet"
+                address_prefix: "${{ inputs.custom_private_subnet_cidr }}"
+              - name: "ProtectSubnet"
+                address_prefix: "${{ inputs.custom_protect_subnet_cidr }}"
+          EOF
+              ;;
+
+            *"パターン⑤"*)
+              cat <<EOF >> "$FILE"
+
+          virtual_network:
+            name: "${VNET_NAME}"
+            resource_group_name: "${RG_NETWORK_NAME}"
+            address_space: ["/23"]
+            hub_peering_enabled: true
+            use_hub_gateway: ${USE_HUB_GATEWAY}
+            subnets:
+              - name: "ApplicationGatewaySubnet"
+                address_prefix: "/24"
+              - name: "PrivateSubnet"
+                address_prefix: "/26"
+              - name: "ProtectSubnet"
+                address_prefix: "/27"
+          EOF
+              ;;
+          esac
+
+          cat <<EOF >> "$FILE"
+
+          subscription_request:
+            jira_issue_key: "${{ inputs.jira_issue_key }}"
+            request_type: "${{ inputs.request_type }}"
+            subscription_owner_email: "${{ inputs.subscription_owner_email }}"
+            subscription_admin_email: "${{ inputs.subscription_admin_email }}"
+            notification_email_1: "${{ inputs.notification_email_1 }}"
+            notification_email_2: "${{ inputs.notification_email_2 }}"
             budget: "${{ inputs.budget }}"
+            budget_alert_enabled: "${{ inputs.budget_alert_enabled }}"
+            billing_company_raw: "${{ inputs.billing_company }}"
+            environment_raw: "${{ inputs.environment }}"
+            configuration_pattern: "${{ inputs.configuration_pattern }}"
+            service_name: "${{ inputs.service_name }}"
+            service_short_name: "${{ inputs.service_short_name }}"
+          EOF
 
-            rbac_assignments:
-            EOF
-
-            printf '%s\n%s\n' "$SUB_OWNER" "$SUB_ADMIN" | awk 'NF && !seen[$0]++ { print "  - \"" $0 "\"" }'
-
-            cat <<EOF
-
-            resource_groups:
-              network:
-                name: "${RG_NETWORK_NAME}"
-                location: "japaneast"
-              application:
-                name: "${RG_ALERT_NAME}"
-                location: "japaneast"
-            EOF
-
-            case "$CONFIG_PATTERN" in
-              *"パターン①"*)
-                ;;
-
-              *"パターン②"*)
-                cat <<EOF
-
-            virtual_network:
-              name: "${VNET_NAME}"
-              resource_group_name: "${RG_NETWORK_NAME}"
-              address_space: ["/23"]
-              hub_peering_enabled: true
-              use_hub_gateway: ${USE_HUB_GATEWAY}
-              subnets:
-                - name: "ApplicationGatewaySubnet"
-                  address_prefix: "/24"
-                - name: "AzureFirewallSubnet"
-                  address_prefix: "/26"
-                - name: "PrivateSubnet"
-                  address_prefix: "/26"
-                - name: "ProtectSubnet"
-                  address_prefix: "/27"
-            EOF
-                ;;
-
-              *"パターン③"*)
-                cat <<EOF
-
-            virtual_network:
-              name: "${VNET_NAME}"
-              resource_group_name: "${RG_NETWORK_NAME}"
-              address_space: ["/23"]
-              hub_peering_enabled: true
-              use_hub_gateway: ${USE_HUB_GATEWAY}
-              subnets:
-                - name: "ApplicationGatewaySubnet"
-                  address_prefix: "/24"
-                - name: "AzureFirewallSubnet"
-                  address_prefix: "/26"
-                - name: "PrivateSubnet"
-                  address_prefix: "/26"
-            EOF
-                ;;
-
-              *"パターン④"*)
-                cat <<EOF
-
-            virtual_network:
-              name: "${VNET_NAME}"
-              resource_group_name: "${RG_NETWORK_NAME}"
-              address_space: ["${{ inputs.custom_vnet_cidr }}"]
-              hub_peering_enabled: true
-              use_hub_gateway: ${USE_HUB_GATEWAY}
-              subnets:
-                - name: "ApplicationGatewaySubnet"
-                  address_prefix: "${{ inputs.custom_appgw_subnet_cidr }}"
-                - name: "AzureFirewallSubnet"
-                  address_prefix: "/26"
-                - name: "PrivateSubnet"
-                  address_prefix: "${{ inputs.custom_private_subnet_cidr }}"
-                - name: "ProtectSubnet"
-                  address_prefix: "${{ inputs.custom_protect_subnet_cidr }}"
-            EOF
-                ;;
-
-              *"パターン⑤"*)
-                cat <<EOF
-
-            virtual_network:
-              name: "${VNET_NAME}"
-              resource_group_name: "${RG_NETWORK_NAME}"
-              address_space: ["/23"]
-              hub_peering_enabled: true
-              use_hub_gateway: ${USE_HUB_GATEWAY}
-              subnets:
-                - name: "ApplicationGatewaySubnet"
-                  address_prefix: "/24"
-                - name: "PrivateSubnet"
-                  address_prefix: "/26"
-                - name: "ProtectSubnet"
-                  address_prefix: "/27"
-            EOF
-                ;;
-            esac
-
-            cat <<EOF
-
-            subscription_request:
-              jira_issue_key: "${{ inputs.jira_issue_key }}"
-              request_type: "${{ inputs.request_type }}"
-              subscription_owner_email: "${{ inputs.subscription_owner_email }}"
-              subscription_admin_email: "${{ inputs.subscription_admin_email }}"
-              notification_email_1: "${{ inputs.notification_email_1 }}"
-              notification_email_2: "${{ inputs.notification_email_2 }}"
-              budget: "${{ inputs.budget }}"
-              budget_alert_enabled: "${{ inputs.budget_alert_enabled }}"
-              billing_company_raw: "${{ inputs.billing_company }}"
-              environment_raw: "${{ inputs.environment }}"
-              configuration_pattern: "${{ inputs.configuration_pattern }}"
-              service_name: "${{ inputs.service_name }}"
-              service_short_name: "${{ inputs.service_short_name }}"
-            EOF
-
-            case "$CONFIG_PATTERN" in
-              *"パターン④"*)
-                cat <<EOF
-              custom_vnet_cidr: "${{ inputs.custom_vnet_cidr }}"
-              custom_private_subnet_cidr: "${{ inputs.custom_private_subnet_cidr }}"
-              custom_protect_subnet_cidr: "${{ inputs.custom_protect_subnet_cidr }}"
-              custom_appgw_subnet_cidr: "${{ inputs.custom_appgw_subnet_cidr }}"
-            EOF
-                ;;
-            esac
-          } | sed 's/^            //' > "$FILE"
+          case "$CONFIG_PATTERN" in
+            *"パターン④"*)
+              cat <<EOF >> "$FILE"
+            custom_vnet_cidr: "${{ inputs.custom_vnet_cidr }}"
+            custom_private_subnet_cidr: "${{ inputs.custom_private_subnet_cidr }}"
+            custom_protect_subnet_cidr: "${{ inputs.custom_protect_subnet_cidr }}"
+            custom_appgw_subnet_cidr: "${{ inputs.custom_appgw_subnet_cidr }}"
+          EOF
+              ;;
+          esac
 
       - name: Create pull request
         id: cpr
