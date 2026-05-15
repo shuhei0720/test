@@ -1,0 +1,46 @@
+subscription_name: "subscription_検証環境_PDI_shuheitestxxxxxxxxx3"
+workload_type: "Production"
+management_group_id: "検証環境"
+location: "japaneast"
+env_short_name: "検証環境"
+
+tags:
+  environment: "検証環境"
+  cost_center: "パーソルダイバース株式会社"
+  owner: "shuhei.furusawa@persol.co.jp"
+  deployed_by: "Terraform"
+
+alert_contacts:
+  - name: "subscription-owner"
+    email_address: "shuhei.furusawa@persol.co.jp"
+  - name: "subscription-owner2"
+    email_address: "takaya.ohashi@persol.co.jp"
+
+budget: "1000000000000"
+
+rbac_assignments:
+  - "shuhei.furusawa@persol.co.jp"
+  - "takaya.ohashi@persol.co.jp"
+
+resource_groups:
+  network:
+    name: "rg-shtestxxxx-検証環境-network-01"
+    location: "japaneast"
+  application:
+    name: "rg-shtestxxxx-検証環境-alert-01"
+    location: "japaneast"
+
+subscription_request:
+  jira_issue_key: "AZP-718"
+  request_type: "作成"
+  subscription_owner_email: "shuhei.furusawa@persol.co.jp"
+  subscription_admin_email: "takaya.ohashi@persol.co.jp"
+  notification_email_1: "shuhei.furusawa@persol.co.jp"
+  notification_email_2: "takaya.ohashi@persol.co.jp"
+  budget: "1000000000000"
+  budget_alert_enabled: "はい"
+  billing_company_raw: "パーソルダイバース株式会社（PDI）"
+  environment_raw: "検証環境"
+  configuration_pattern: "OpenAI APIのみを利用する（パターン①）"
+  service_name: "shuheitestxxxxxxxxx3"
+  service_short_name: "shtestxxxx"
