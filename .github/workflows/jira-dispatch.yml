@@ -1,4 +1,5 @@
 name: jira-dispatch
+run-name: jira-dispatch-${{ inputs.jira_issue_key }}-${{ inputs.environment }}-${{ inputs.service_name }}
 
 on:
   workflow_dispatch:
