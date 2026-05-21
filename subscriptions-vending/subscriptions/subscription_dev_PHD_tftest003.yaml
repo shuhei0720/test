@@ -1,4 +1,4 @@
-subscription_name: "subscription_dev_PHD_tftest003"
+subscription_name: "subscription_dev_PHD_tftest004"
 workload_type: "Production"
 management_group_id: "TEST-PHDInfraTeam"
 location: "japaneast"
