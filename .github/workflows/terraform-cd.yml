@@ -20,6 +20,7 @@ env:
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   ARM_USE_OIDC: true
   TERRAFORM_WORKING_DIR: subscriptions-vending
+  POST_DEPLOY_TEST_SCRIPT: tests/post_deploy_test.py
 
 jobs:
   plan:
@@ -93,8 +94,10 @@ jobs:
         if: steps.plan.outputs.has_changes == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: tfplan
-          path: ${{ env.TERRAFORM_WORKING_DIR }}/tfplan
+          name: terraform-plan
+          path: |
+            ${{ env.TERRAFORM_WORKING_DIR }}/tfplan
+            ${{ env.TERRAFORM_WORKING_DIR }}/plan-output.txt
           retention-days: 1
 
   apply:
@@ -123,6 +126,14 @@ jobs:
           terraform_version: ~> 1.12
           terraform_wrapper: false
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
       - name: Terraform Init (local state)
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform init -backend=false
@@ -130,12 +141,66 @@ jobs:
       - name: Download Plan Artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: tfplan
+          name: terraform-plan
           path: ${{ env.TERRAFORM_WORKING_DIR }}
+
+      - name: Write Plan Summary
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        shell: bash
+        run: |
+          echo "### 📋 Plan result" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^Plan:|^Changes to Outputs' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "#### リソース変更一覧" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^  # .* (will be|must be)' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Terraform Apply
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform apply -auto-approve -input=false tfplan
+
+      - name: Run post-deploy tests
+        id: post_test
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        shell: bash
+        run: |
+          set +e
+          shopt -s nullglob
+          files=(subscriptions/*.yaml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "### ❌ Post-deploy test result" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "subscriptions 配下に YAML が見つかりません" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          : > post-test-output.txt
+          TEST_EXIT_CODE=0
+
+          for file in "${files[@]}"; do
+            echo "=== TEST TARGET: ${file} ===" | tee -a post-test-output.txt
+            python "${{ env.POST_DEPLOY_TEST_SCRIPT }}" "$file" 2>&1 | tee -a post-test-output.txt
+            CURRENT_EXIT_CODE=${PIPESTATUS[0]}
+            if [[ $CURRENT_EXIT_CODE -ne 0 ]]; then
+              TEST_EXIT_CODE=$CURRENT_EXIT_CODE
+            fi
+            echo "" | tee -a post-test-output.txt
+          done
+
+          if [[ $TEST_EXIT_CODE -eq 0 ]]; then
+            echo "### ✅ Post-deploy test result" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Post-deploy test result" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat post-test-output.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          exit $TEST_EXIT_CODE
 
       - name: Prepare move applied YAMLs
         id: move
