@@ -1,4 +1,5 @@
 name: Terraform CD
+run-name: CD-${{ github.event.head_commit.message }}
 
 on:
   push:
@@ -13,6 +14,7 @@ permissions:
   id-token: write
   contents: write
   pull-requests: write
+  actions: read
 
 env:
   ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -28,10 +30,37 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has_changes: ${{ steps.plan.outputs.has_changes }}
+      jira_issue_key: ${{ steps.jira.outputs.jira_issue_key }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Derive JIRA issue key
+        id: jira
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(subscriptions/*.yaml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "subscriptions 配下に YAML が見つかりません" >&2
+            exit 1
+          fi
+          JIRA_ISSUE_KEY=$(python -c "import sys,yaml; print(yaml.safe_load(open(sys.argv[1], encoding='utf-8'))['subscription_request']['jira_issue_key'])" "${files[0]}")
+          echo "jira_issue_key=${JIRA_ISSUE_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore previous tfstate artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          github_token: ${{ github.token }}
+          workflow: terraform-cd.yml
+          branch: main
+          name: tfstate-${{ steps.jira.outputs.jira_issue_key }}
+          path: ${{ env.TERRAFORM_WORKING_DIR }}
+          if_no_artifact_found: warn
+          search_artifacts: true
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
@@ -94,10 +123,12 @@ jobs:
         if: steps.plan.outputs.has_changes == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: terraform-plan
+          name: terraform-plan-${{ steps.jira.outputs.jira_issue_key }}
           path: |
             ${{ env.TERRAFORM_WORKING_DIR }}/tfplan
             ${{ env.TERRAFORM_WORKING_DIR }}/plan-output.txt
+            ${{ env.TERRAFORM_WORKING_DIR }}/terraform.tfstate
+            ${{ env.TERRAFORM_WORKING_DIR }}/terraform.tfstate.backup
           retention-days: 1
 
   apply:
@@ -141,7 +172,7 @@ jobs:
       - name: Download Plan Artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: terraform-plan
+          name: terraform-plan-${{ needs.plan.outputs.jira_issue_key }}
           path: ${{ env.TERRAFORM_WORKING_DIR }}
 
       - name: Write Plan Summary
@@ -159,10 +190,29 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Terraform Apply
+        id: terraform_apply
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
-        run: terraform apply -auto-approve -input=false tfplan
+        shell: bash
+        run: |
+          set +e
+          terraform apply -auto-approve -input=false tfplan
+          EXIT_CODE=$?
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Save latest tfstate artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tfstate-${{ needs.plan.outputs.jira_issue_key }}
+          path: |
+            ${{ env.TERRAFORM_WORKING_DIR }}/terraform.tfstate
+            ${{ env.TERRAFORM_WORKING_DIR }}/terraform.tfstate.backup
+          retention-days: 30
+          overwrite: true
 
       - name: Run post-deploy tests
+        if: steps.terraform_apply.outputs.exit_code == '0'
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         shell: bash
         run: |
@@ -174,7 +224,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             echo "subscriptions 配下に YAML が見つかりません" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            exit 1
+            exit 0
           fi
 
           : > post-test-output.txt
@@ -198,15 +248,15 @@ jobs:
           cat post-test-output.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-          exit $TEST_EXIT_CODE
+          exit 0
 
       - name: Prepare move applied YAMLs
+        if: steps.terraform_apply.outputs.exit_code == '0'
         id: move
         shell: bash
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
           set -euo pipefail
-          mkdir -p created
           shopt -s nullglob
           files=(subscriptions/*.yaml)
           if [ ${#files[@]} -eq 0 ]; then
@@ -217,7 +267,7 @@ jobs:
           echo "moved=true" >> "$GITHUB_OUTPUT"
 
       - name: Create pull request for moved YAMLs
-        if: steps.move.outputs.moved == 'true'
+        if: steps.terraform_apply.outputs.exit_code == '0' && steps.move.outputs.moved == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ github.token }}
@@ -239,3 +289,7 @@ jobs:
             ## 備考
             - この PR は Terraform CD workflow により自動作成されています。
           delete-branch: false
+
+      - name: Fail workflow if apply failed
+        if: steps.terraform_apply.outputs.exit_code != '0'
+        run: exit 1
