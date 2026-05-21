@@ -23,9 +23,88 @@ env:
   POST_DEPLOY_TEST_SCRIPT: test/test_subscription_vending.py
 
 jobs:
-  test:
-    name: Python Test Only
+  plan:
+    name: Plan
     runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
+        with:
+          terraform_version: ~> 1.12
+          terraform_wrapper: false
+
+      - name: Terraform Init (local state)
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: |
+          set +e
+          terraform plan -no-color -input=false -out=tfplan -detailed-exitcode 2>&1 | tee plan-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          if [[ $EXIT_CODE -eq 0 ]]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "### ✅ Plan: 変更なし" >> "$GITHUB_STEP_SUMMARY"
+            echo "インフラは最新の状態です。apply はスキップされます。" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ $EXIT_CODE -eq 2 ]]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "### 📋 Plan: 変更あり — 承認待ち" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "以下の変更が apply されます。\`Apply\` ジョブの承認で適用してください。" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E '^Plan:|^Changes to Outputs' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "#### リソース変更一覧" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E '^  # .* (will be|must be)' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "### ❌ Plan: エラー" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -50 plan-output.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Upload Plan Artifact
+        if: steps.plan.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: terraform-plan
+          path: |
+            ${{ env.TERRAFORM_WORKING_DIR }}/tfplan
+            ${{ env.TERRAFORM_WORKING_DIR }}/plan-output.txt
+          retention-days: 1
+
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.has_changes == 'true'
     environment: azure
 
     steps:
@@ -41,6 +120,12 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
+        with:
+          terraform_version: ~> 1.12
+          terraform_wrapper: false
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -48,6 +133,34 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install pyyaml
+
+      - name: Terraform Init (local state)
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform init -backend=false
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: terraform-plan
+          path: ${{ env.TERRAFORM_WORKING_DIR }}
+
+      - name: Write Plan Summary
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        shell: bash
+        run: |
+          echo "### 📋 Plan result" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^Plan:|^Changes to Outputs' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "#### リソース変更一覧" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^  # .* (will be|must be)' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform apply -auto-approve -input=false tfplan
 
       - name: Run post-deploy tests
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
@@ -68,14 +181,6 @@ jobs:
           TEST_EXIT_CODE=0
 
           for file in "${files[@]}"; do
-            echo "=== TEST TARGET: ${file} ===" | tee -a post-test-output.txt
-            echo '$ az account show' | tee -a post-test-output.txt
-            az account show 2>&1 | tee -a post-test-output.txt
-            echo '' | tee -a post-test-output.txt
-            echo '$ az account list --all' | tee -a post-test-output.txt
-            az account list --all 2>&1 | tee -a post-test-output.txt
-            echo '' | tee -a post-test-output.txt
-            echo '$ python "${{ env.POST_DEPLOY_TEST_SCRIPT }}" "'"${file}"'"' | tee -a post-test-output.txt
             python "${{ env.POST_DEPLOY_TEST_SCRIPT }}" "$file" 2>&1 | tee -a post-test-output.txt
             CURRENT_EXIT_CODE=${PIPESTATUS[0]}
             if [[ $CURRENT_EXIT_CODE -ne 0 ]]; then
@@ -94,3 +199,43 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
           exit $TEST_EXIT_CODE
+
+      - name: Prepare move applied YAMLs
+        id: move
+        shell: bash
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          mkdir -p created
+          shopt -s nullglob
+          files=(subscriptions/*.yaml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "moved=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mv subscriptions/*.yaml created/
+          echo "moved=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request for moved YAMLs
+        if: steps.move.outputs.moved == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ github.token }}
+          commit-message: "Move applied subscription YAMLs to created"
+          branch: "automation/move-applied-subscription-yamls-${{ github.run_id }}"
+          base: main
+          title: "Move applied subscription YAMLs to created"
+          body: |
+            ## 概要
+            Terraform Apply 成功後、処理済みの subscription YAML を `subscriptions/` から `created/` へ移動しました。
+
+            ## 背景
+            - このリポジトリではサブスクリプション払い出しを使い捨て運用とする
+            - local state のため、再実行対象から外すために YAML を退避する
+
+            ## 変更内容
+            - `${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/*.yaml` → `${{ env.TERRAFORM_WORKING_DIR }}/created/` に移動
+
+            ## 備考
+            - この PR は Terraform CD workflow により自動作成されています。
+          delete-branch: false
