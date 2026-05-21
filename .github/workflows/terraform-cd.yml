@@ -20,7 +20,7 @@ env:
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   ARM_USE_OIDC: true
   TERRAFORM_WORKING_DIR: subscriptions-vending
-  POST_DEPLOY_TEST_SCRIPT: tests/post_deploy_test.py
+  POST_DEPLOY_TEST_SCRIPT: test/test_subscription_vending.py
 
 jobs:
   plan:
