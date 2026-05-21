@@ -19,8 +19,7 @@ alert_contacts:
 budget: "1000000000000"
 
 rbac_assignments:
-  - "shuhei.furusawa@grcore.com"
-  - "kyohei.tokimasa@grcore.com"
+  - "shuhei70720_gmail.com#EXT#@shuhei70720gmail.onmicrosoft.com"
 
 resource_groups:
   network:
