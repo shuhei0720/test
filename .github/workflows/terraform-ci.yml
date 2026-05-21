@@ -1,0 +1,153 @@
+name: Terraform CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: terraform-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  security-events: write
+
+env:
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: true
+  TERRAFORM_WORKING_DIR: subscriptions-vending
+
+jobs:
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Trivy IaC Scan (SARIF)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: ${{ env.TERRAFORM_WORKING_DIR }}
+          format: sarif
+          output: ${{ env.TERRAFORM_WORKING_DIR }}/trivy-results.sarif
+          severity: MEDIUM,HIGH,CRITICAL
+          trivyignores: ${{ env.TERRAFORM_WORKING_DIR }}/.trivyignore
+          exit-code: 0
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
+        if: ${{ !cancelled() }}
+        with:
+          sarif_file: ${{ env.TERRAFORM_WORKING_DIR }}/trivy-results.sarif
+
+      - name: Trivy IaC Scan (Gate)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        id: trivy
+        with:
+          scan-type: config
+          scan-ref: ${{ env.TERRAFORM_WORKING_DIR }}
+          format: table
+          output: ${{ env.TERRAFORM_WORKING_DIR }}/trivy-table.txt
+          severity: HIGH,CRITICAL
+          trivyignores: ${{ env.TERRAFORM_WORKING_DIR }}/.trivyignore
+          exit-code: 1
+        continue-on-error: true
+
+      - name: Post Security Results to PR
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        if: ${{ !cancelled() }}
+        with:
+          script: |
+            const fs = require('fs');
+            const raw = fs.readFileSync('${{ env.TERRAFORM_WORKING_DIR }}/trivy-table.txt', 'utf8').trim();
+            const passed = '${{ steps.trivy.outcome }}' === 'success';
+            let body;
+            if (passed || raw.length === 0) {
+              body = '#### 🛡️ Trivy セキュリティスキャン ✅\nHIGH/CRITICAL の問題は検出されませんでした。\n\n> MEDIUM の検出がある場合は **Security** タブ → Code scanning alerts で確認できます。';
+            } else {
+              const table = raw.length > 60000
+                ? raw.substring(0, 30000) + '\n\n... (省略) ...\n\n' + raw.substring(raw.length - 30000)
+                : raw;
+              body = `#### 🛡️ Trivy セキュリティスキャン ❌\n<details>\n<summary>HIGH/CRITICAL の問題が検出されました（クリックで展開）</summary>\n\n\`\`\`\n${table}\n\`\`\`\n</details>\n\n> 上記の問題を修正するか、許容する場合は理由を添えて \`.trivyignore\` に追加してください。\n> 詳細: **Security** タブ → Code scanning alerts`;
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body.substring(0, 65536)
+            });
+
+      - name: Security Gate
+        if: steps.trivy.outcome == 'failure'
+        run: |
+          echo "::error::Trivy が HIGH/CRITICAL のセキュリティ問題を検出しました。PR コメントを確認してください。"
+          exit 1
+
+  plan:
+    name: Validate & Plan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
+        with:
+          terraform_version: ~> 1.12
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init (local state)
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: |
+          set -o pipefail
+          terraform plan -no-color -input=false 2>&1 | tee plan_output.txt
+        continue-on-error: true
+
+      - name: Post Plan to PR
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        if: ${{ !cancelled() }}
+        with:
+          script: |
+            const fs = require('fs');
+            let plan = fs.readFileSync('${{ env.TERRAFORM_WORKING_DIR }}/plan_output.txt', 'utf8');
+            if (plan.length > 60000) {
+              plan = plan.substring(0, 30000) + '\n\n... (truncated) ...\n\n' + plan.substring(plan.length - 30000);
+            }
+            const output = `#### Terraform Plan 📋\n\`\`\`\n${plan}\n\`\`\`\n*Triggered by @${{ github.actor }}*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output.substring(0, 65536)
+            })
+
+      - name: Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
