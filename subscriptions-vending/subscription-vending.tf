@@ -537,12 +537,6 @@ resource "azapi_update_resource" "vending_subnets_association" {
   body = {
     properties = merge(
       {
-        addressPrefixes = [
-          coalesce(
-            try(jsondecode(jsonencode(azapi_resource.vending_subnets[each.key].output)).properties.addressPrefix, null),
-            try(jsondecode(jsonencode(azapi_resource.vending_subnets[each.key].output)).properties.addressPrefixes[0], null)
-          )
-        ]
         defaultOutboundAccess = false
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
@@ -578,7 +572,6 @@ resource "azapi_update_resource" "vending_subnets_association" {
     azapi_resource.vending_rt_protect
   ]
 }
-
 
 # # =============================================================================
 # # Spoke -> Hub Peering

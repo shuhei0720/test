@@ -126,10 +126,8 @@ locals {
 
   # 作成後の subnet 実CIDR
   resolved_subnet_prefixes = {
-    for k, v in local.vending_subnets : k => coalesce(
-      try(jsondecode(jsonencode(azapi_resource.vending_subnets[k].output)).properties.addressPrefix, null),
-      try(jsondecode(jsonencode(azapi_resource.vending_subnets[k].output)).properties.addressPrefixes[0], null)
-    )
+    for k, v in local.vending_subnets :
+    k => jsondecode(jsonencode(azapi_resource.vending_subnets[k].output)).properties.ipamPoolPrefixAllocations[0].allocatedAddressPrefixes[0]
   }
 
   # 特定サブネットを名前で引けるようにする
