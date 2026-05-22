@@ -257,6 +257,7 @@ jobs:
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
           set -euo pipefail
+          mkdir -p subscriptions/created
           shopt -s nullglob
           files=(subscriptions/*.yaml)
           if [ ${#files[@]} -eq 0 ]; then
