@@ -116,10 +116,8 @@ locals {
     } if v.has_vnet
   ]...)
 
-  # 既存 resource 名との互換
   vending_subnets = local.subnet_catalog
 
-  # 順序制御用
   vending_subnets_agw = {
     for k, v in local.subnet_catalog : k => v
     if v.name == "ApplicationGatewaySubnet"
@@ -145,7 +143,7 @@ locals {
     for k, v in local.subnet_catalog : k => {
       sub_key                  = v.sub_key
       name                     = v.name
-      effective_address_prefix = data.azapi_resource.vending_subnet_read[k].output.properties.ipamPoolPrefixAllocations[0].allocatedAddressPrefixes[0]
+      effective_address_prefix = data.azapi_resource.vending_subnet_read[k].output.properties.addressPrefixes[0]
     }
   }
 
@@ -169,7 +167,6 @@ locals {
     if contains(keys(local.resolved_subnet_map), "${k}/ProtectSubnet")
   }
 
-  # AzureFirewallSubnet の 4番目のIPを Spoke FW IP として使う
   spoke_fw_ip_map = {
     for k, v in local.firewall_subnet_map : k => cidrhost(v.effective_address_prefix, 4)
   }
