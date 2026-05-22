@@ -361,7 +361,10 @@ resource "azapi_resource" "vending_nsg_protect" {
     }
   }
 
-  depends_on = [azapi_resource.vending_resource_groups]
+  depends_on = [
+    azapi_resource.vending_resource_groups,
+    azapi_resource.vending_subnets
+  ]
 
   lifecycle { ignore_changes = all }
 }
@@ -394,7 +397,10 @@ resource "azapi_resource" "vending_rt_agw" {
     }
   }
 
-  depends_on = [azapi_resource.vending_resource_groups]
+  depends_on = [
+    azapi_resource.vending_resource_groups,
+    azapi_resource.vending_subnets
+  ]
 
   lifecycle { ignore_changes = [body] }
 }
@@ -436,7 +442,10 @@ resource "azapi_resource" "vending_rt_private" {
     }
   }
 
-  depends_on = [azapi_resource.vending_resource_groups]
+  depends_on = [
+    azapi_resource.vending_resource_groups,
+    azapi_resource.vending_subnets
+  ]
 
   lifecycle { ignore_changes = [body] }
 }
@@ -482,11 +491,20 @@ resource "azapi_resource" "vending_subnets" {
   name      = each.value.name
   parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
 
+  schema_validation_enabled = false
+
   body = {
     properties = merge(
       {
-        addressPrefix         = each.value.effective_address_prefix
         defaultOutboundAccess = false
+        ipamPoolPrefixAllocations = [
+          {
+            numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
+            pool = {
+              id = each.value.ipam_pool_id
+            }
+          }
+        ]
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
         routeTable = {
@@ -511,6 +529,8 @@ resource "azapi_resource" "vending_subnets" {
       } : {}
     )
   }
+
+  response_export_values = ["properties.addressPrefix"]
 
   retry = {
     error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
