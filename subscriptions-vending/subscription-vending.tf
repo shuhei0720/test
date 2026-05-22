@@ -225,7 +225,7 @@ resource "azapi_resource" "vending_vnet" {
             }
           ]
         }
-      } : {
+        } : {
         addressSpace = {
           addressPrefixes = each.value.address_space
         }

@@ -31,7 +31,7 @@ locals {
       tags                  = try(v.tags, {})
       budget                = try(tonumber(v.budget), null)
       enrollment_account_id = var.enrollment_account_id_map[v.tags.cost_center]
-      billing_scope_id      = "/providers/Microsoft.Billing/billingAccounts/${var.billing_account_id}/enrollmentAccounts/${var.enrollment_account_id_map[v.tags.cost_center]}"
+      billing_scope_id      = "/providers/Microsoft.Billing/billingAccounts/6d92e1a7-44ef-5b9d-fe85-600e31fecd27:7ffb2b72-d71a-46c2-ac74-10566d437c9e_2019-05-31/billingProfiles/KXVV-QQVV-BG7-PGB/invoiceSections/b5316415-c236-41e7-8237-fcf186346a73"
 
       network_rg_name     = v.resource_groups.network.name
       network_rg_location = try(v.resource_groups.network.location, v.location)
@@ -115,7 +115,7 @@ locals {
             tonumber(replace(s.address_prefix, "/", "")) - tonumber(split("/", local.resolved_vnet_address_space[k])[1]),
             ceil(sum(concat([
               0
-            ], [
+              ], [
               for prev in slice(try(local.subscriptions_raw[k].virtual_network.subnets, []), 0, idx) :
               pow(
                 2,
