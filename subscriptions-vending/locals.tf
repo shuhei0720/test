@@ -31,7 +31,7 @@ locals {
       tags                  = try(v.tags, {})
       budget                = try(tonumber(v.budget), null)
       enrollment_account_id = var.enrollment_account_id_map[v.tags.cost_center]
-      billing_scope_id      = "/providers/Microsoft.Billing/billingAccounts/6d92e1a7-44ef-5b9d-fe85-600e31fecd27:7ffb2b72-d71a-46c2-ac74-10566d437c9e_2019-05-31/billingProfiles/KXVV-QQVV-BG7-PGB/invoiceSections/b5316415-c236-41e7-8237-fcf186346a73"
+      billing_scope_id      = "/providers/Microsoft.Billing/billingAccounts/${var.billing_account_id}/enrollmentAccounts/${var.enrollment_account_id_map[v.tags.cost_center]}"
 
       network_rg_name     = v.resource_groups.network.name
       network_rg_location = try(v.resource_groups.network.location, v.location)
@@ -44,7 +44,6 @@ locals {
       alert_contacts   = try(v.alert_contacts, [])
       rbac_assignments = [for x in try(v.rbac_assignments, []) : x if trimspace(x) != ""]
 
-      # VNet払い出し
       vnet_name       = try(v.virtual_network.name, null)
       vnet_rg_name    = try(v.virtual_network.resource_group_name, null)
       address_space   = try(v.virtual_network.address_space, [])
@@ -53,18 +52,17 @@ locals {
       use_hub_gateway = try(v.virtual_network.use_hub_gateway, false)
 
       use_ipam = (
-        try(v.virtual_network, null) != null
-        && length(try(v.virtual_network.address_space, [])) > 0
-        && startswith(v.virtual_network.address_space[0], "/")
+        try(v.virtual_network, null) != null &&
+        length(try(v.virtual_network.address_space, [])) > 0 &&
+        startswith(v.virtual_network.address_space[0], "/")
       )
 
       ipam_prefix_length = (
-        try(v.virtual_network, null) != null
-        && length(try(v.virtual_network.address_space, [])) > 0
-        && startswith(v.virtual_network.address_space[0], "/")
+        try(v.virtual_network, null) != null &&
+        length(try(v.virtual_network.address_space, [])) > 0 &&
+        startswith(v.virtual_network.address_space[0], "/")
       ) ? tonumber(trimprefix(v.virtual_network.address_space[0], "/")) : null
 
-      # 命名規則で作る名前
       rt_agw_name      = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-agw-01"
       rt_private_name  = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-private-01"
       rt_protect_name  = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-protect-01"
@@ -103,7 +101,7 @@ locals {
     if v.has_vnet
   }
 
-  # YAML に定義された subnet 名一覧（for_each 判定用に静的に使う）
+  # YAML に定義された subnet 名一覧
   requested_subnet_names = {
     for k, v in local.subscriptions_raw : k => [
       for s in try(v.virtual_network.subnets, []) : s.name
@@ -111,47 +109,65 @@ locals {
     if try(v.virtual_network, null) != null
   }
 
-  # サブネットを先頭から自動採番して CIDR 化
-  computed_subnets = {
-    for k, v in local.subscriptions : k => [
-      for idx, s in try(local.subscriptions_raw[k].virtual_network.subnets, []) : {
-        name = s.name
-        effective_address_prefix = try(
-          s.address_range,
-          cidrsubnet(
-            local.resolved_vnet_address_space[k],
-            tonumber(replace(s.address_prefix, "/", "")) - tonumber(split("/", local.resolved_vnet_address_space[k])[1]),
-            ceil(sum(concat([
-              0
-              ], [
-              for prev in slice(try(local.subscriptions_raw[k].virtual_network.subnets, []), 0, idx) :
-              pow(
-                2,
-                tonumber(replace(s.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-              )
-            ])))
-          )
-        )
+  # Subnet 用の for_each map（Subnet も IPAM 割り当て）
+  vending_subnets = merge([
+    for k, v in local.subscriptions : {
+      for s in try(local.subscriptions_raw[k].virtual_network.subnets, []) :
+      "${k}/${s.name}" => {
+        sub_key       = k
+        sub_id        = local.resolved_subscription_ids[k]
+        vnet_rg       = v.vnet_rg_name
+        name          = s.name
+        prefix_length = tonumber(trimprefix(s.address_prefix, "/"))
+        ipam_pool_id  = v.hub.spoke_ipam_pool_id
       }
-    ]
-    if v.has_vnet
+    } if v.has_vnet
+  ]...)
+
+  # 作成後の subnet 実CIDR
+  resolved_subnet_prefixes = {
+    for k, v in local.vending_subnets : k => azapi_resource.vending_subnets[k].output.properties.addressPrefix
   }
 
   # 特定サブネットを名前で引けるようにする
   firewall_subnet_map = {
-    for k, v in local.computed_subnets : k => try(one([for s in v : s if s.name == "AzureFirewallSubnet"]), null)
+    for k, v in local.subscriptions : k => (
+      contains(try(local.requested_subnet_names[k], []), "AzureFirewallSubnet") ? {
+        name                     = "AzureFirewallSubnet"
+        effective_address_prefix = local.resolved_subnet_prefixes["${k}/AzureFirewallSubnet"]
+      } : null
+    )
+    if v.has_vnet
   }
 
   agw_subnet_map = {
-    for k, v in local.computed_subnets : k => try(one([for s in v : s if s.name == "ApplicationGatewaySubnet"]), null)
+    for k, v in local.subscriptions : k => (
+      contains(try(local.requested_subnet_names[k], []), "ApplicationGatewaySubnet") ? {
+        name                     = "ApplicationGatewaySubnet"
+        effective_address_prefix = local.resolved_subnet_prefixes["${k}/ApplicationGatewaySubnet"]
+      } : null
+    )
+    if v.has_vnet
   }
 
   private_subnet_map = {
-    for k, v in local.computed_subnets : k => try(one([for s in v : s if s.name == "PrivateSubnet"]), null)
+    for k, v in local.subscriptions : k => (
+      contains(try(local.requested_subnet_names[k], []), "PrivateSubnet") ? {
+        name                     = "PrivateSubnet"
+        effective_address_prefix = local.resolved_subnet_prefixes["${k}/PrivateSubnet"]
+      } : null
+    )
+    if v.has_vnet
   }
 
   protect_subnet_map = {
-    for k, v in local.computed_subnets : k => try(one([for s in v : s if s.name == "ProtectSubnet"]), null)
+    for k, v in local.subscriptions : k => (
+      contains(try(local.requested_subnet_names[k], []), "ProtectSubnet") ? {
+        name                     = "ProtectSubnet"
+        effective_address_prefix = local.resolved_subnet_prefixes["${k}/ProtectSubnet"]
+      } : null
+    )
+    if v.has_vnet
   }
 
   # AzureFirewallSubnet の 4番目のIPを Spoke FW IP として使う
@@ -207,21 +223,6 @@ locals {
     }
     if v.budget != null && length(v.alert_contacts) > 0
   }
-
-  # Subnet 用の for_each map
-  vending_subnets = merge([
-    for k, v in local.subscriptions : {
-      for idx, subnet in local.computed_subnets[k] :
-      "${k}/${subnet.name}" => {
-        sub_key                  = k
-        sub_id                   = local.resolved_subscription_ids[k]
-        vnet_rg                  = v.vnet_rg_name
-        name                     = subnet.name
-        effective_address_prefix = subnet.effective_address_prefix
-        subnet_index             = idx
-      }
-    } if v.has_vnet
-  ]...)
 
   # VNetありのもの
   vending_with_vnet = {
