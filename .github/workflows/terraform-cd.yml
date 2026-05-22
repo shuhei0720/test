@@ -272,10 +272,10 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ github.token }}
-          commit-message: "Move applied subscription YAMLs to created"
+          commit-message: "${{ needs.plan.outputs.jira_issue_key }}-Move applied subscription YAMLs to created"
           branch: "automation/move-applied-subscription-yamls-${{ github.run_id }}"
           base: main
-          title: "Move applied subscription YAMLs to created"
+          title: "${{ needs.plan.outputs.jira_issue_key }}-Move applied subscription YAMLs to created"
           add-paths: |
             ${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/*.yaml
             ${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/created/*.yaml
