@@ -162,7 +162,7 @@ resource "azapi_resource" "service_health" {
 
   depends_on = [
     azapi_resource.vending_resource_groups,
-    azapi_resource.spoke_action_group
+    azapi_resource.spoke_action_group,
   ]
 }
 
@@ -230,18 +230,20 @@ resource "azapi_resource" "vending_vnet" {
           } : {},
           each.value.use_ipam ? {} : {
             addressPrefixes = each.value.address_space
-          }
+          },
         )
       },
       try(length(each.value.hub.hub_dns_servers), 0) > 0 ? {
         dhcpOptions = {
           dnsServers = each.value.hub.hub_dns_servers
         }
-      } : {}
+      } : {},
     )
   }
 
-  response_export_values = ["properties.addressSpace.addressPrefixes"]
+  response_export_values = [
+    "properties.addressSpace.addressPrefixes",
+  ]
 
   depends_on = [azapi_resource.vending_resource_groups]
 
@@ -266,6 +268,57 @@ resource "azapi_update_resource" "vending_vnet_dns" {
   }
 
   depends_on = [azapi_resource.vending_vnet]
+}
+
+# =============================================================================
+# Subnets
+# =============================================================================
+
+resource "azapi_resource" "vending_subnets" {
+  for_each = local.vending_subnets
+
+  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  name      = each.value.name
+  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
+
+  schema_validation_enabled = false
+
+  body = {
+    properties = {
+      defaultOutboundAccess = false
+      ipamPoolPrefixAllocations = [
+        {
+          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
+          pool = {
+            id = each.value.ipam_pool_id
+          }
+        }
+      ]
+    }
+  }
+
+  retry = {
+    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
+    interval_seconds     = 10
+    max_interval_seconds = 60
+  }
+
+  depends_on = [
+    azapi_update_resource.vending_vnet_dns,
+  ]
+
+  lifecycle { ignore_changes = all }
+}
+
+resource "azapi_resource_action" "vending_subnet_get" {
+  for_each = local.vending_subnets
+
+  type        = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  resource_id = azapi_resource.vending_subnets[each.key].id
+  action      = ""
+  method      = "GET"
+
+  depends_on = [azapi_resource.vending_subnets]
 }
 
 # =============================================================================
@@ -309,7 +362,7 @@ resource "azapi_resource" "vending_nsg_private" {
             sourceAddressPrefix      = "*"
             destinationAddressPrefix = "*"
           }
-        }
+        },
       ]
     }
   }
@@ -327,6 +380,8 @@ resource "azapi_resource" "vending_nsg_protect" {
   parent_id = "/subscriptions/${local.resolved_subscription_ids[each.key]}/resourceGroups/${each.value.vnet_rg_name}"
   location  = each.value.location
   tags      = each.value.tags
+
+  schema_validation_enabled = false
 
   body = {
     properties = {
@@ -356,14 +411,15 @@ resource "azapi_resource" "vending_nsg_protect" {
             sourceAddressPrefix      = "*"
             destinationAddressPrefix = "*"
           }
-        }
+        },
       ]
     }
   }
 
   depends_on = [
     azapi_resource.vending_resource_groups,
-    azapi_resource.vending_subnets
+    azapi_resource.vending_subnets,
+    azapi_resource_action.vending_subnet_get,
   ]
 
   lifecycle { ignore_changes = all }
@@ -382,6 +438,8 @@ resource "azapi_resource" "vending_rt_agw" {
   location  = each.value.location
   tags      = each.value.tags
 
+  schema_validation_enabled = false
+
   body = {
     properties = {
       routes = [
@@ -392,14 +450,15 @@ resource "azapi_resource" "vending_rt_agw" {
             nextHopType      = "VirtualAppliance"
             nextHopIpAddress = local.spoke_fw_ip_map[each.key]
           }
-        }
+        },
       ]
     }
   }
 
   depends_on = [
     azapi_resource.vending_resource_groups,
-    azapi_resource.vending_subnets
+    azapi_resource.vending_subnets,
+    azapi_resource_action.vending_subnet_get,
   ]
 
   lifecycle { ignore_changes = [body] }
@@ -414,6 +473,8 @@ resource "azapi_resource" "vending_rt_private" {
   location  = each.value.location
   tags      = each.value.tags
 
+  schema_validation_enabled = false
+
   body = {
     properties = {
       disableBgpRoutePropagation = true
@@ -426,7 +487,7 @@ resource "azapi_resource" "vending_rt_private" {
               nextHopType      = "VirtualAppliance"
               nextHopIpAddress = each.value.hub.hub_firewall_private_ip
             }
-          }
+          },
         ],
         try(local.agw_subnet_map[each.key], null) != null && try(local.spoke_fw_ip_map[each.key], null) != null ? [
           {
@@ -436,15 +497,16 @@ resource "azapi_resource" "vending_rt_private" {
               nextHopType      = "VirtualAppliance"
               nextHopIpAddress = local.spoke_fw_ip_map[each.key]
             }
-          }
-        ] : []
+          },
+        ] : [],
       )
     }
   }
 
   depends_on = [
     azapi_resource.vending_resource_groups,
-    azapi_resource.vending_subnets
+    azapi_resource.vending_subnets,
+    azapi_resource_action.vending_subnet_get,
   ]
 
   lifecycle { ignore_changes = [body] }
@@ -470,7 +532,7 @@ resource "azapi_resource" "vending_rt_protect" {
             nextHopType      = "VirtualAppliance"
             nextHopIpAddress = each.value.hub.hub_firewall_private_ip
           }
-        }
+        },
       ]
     }
   }
@@ -478,48 +540,6 @@ resource "azapi_resource" "vending_rt_protect" {
   depends_on = [azapi_resource.vending_resource_groups]
 
   lifecycle { ignore_changes = [body] }
-}
-
-# =============================================================================
-# Subnets
-# =============================================================================
-
-resource "azapi_resource" "vending_subnets" {
-  for_each = local.vending_subnets
-
-  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  name      = each.value.name
-  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      defaultOutboundAccess = false
-      ipamPoolPrefixAllocations = [
-        {
-          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-          pool = {
-            id = each.value.ipam_pool_id
-          }
-        }
-      ]
-    }
-  }
-
-  response_export_values = ["properties.addressPrefix"]
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
-  }
-
-  depends_on = [
-    azapi_update_resource.vending_vnet_dns
-  ]
-
-  lifecycle { ignore_changes = all }
 }
 
 resource "azapi_update_resource" "vending_subnets_association" {
@@ -531,7 +551,6 @@ resource "azapi_update_resource" "vending_subnets_association" {
   body = {
     properties = merge(
       {
-        addressPrefix         = azapi_resource.vending_subnets[each.key].output.properties.addressPrefix
         defaultOutboundAccess = false
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
@@ -554,7 +573,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
         routeTable = {
           id = azapi_resource.vending_rt_protect[each.value.sub_key].id
         }
-      } : {}
+      } : {},
     )
   }
 
@@ -564,7 +583,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
     azapi_resource.vending_nsg_protect,
     azapi_resource.vending_rt_agw,
     azapi_resource.vending_rt_private,
-    azapi_resource.vending_rt_protect
+    azapi_resource.vending_rt_protect,
   ]
 }
 
