@@ -214,21 +214,22 @@ resource "azapi_resource" "vending_vnet" {
 
   body = {
     properties = merge(
-      each.value.use_ipam ? {
-        addressSpace = {
-          ipamPoolPrefixAllocations = [
-            {
-              numberOfIpAddresses = tostring(pow(2, 32 - each.value.ipam_prefix_length))
-              pool = {
-                id = each.value.hub.spoke_ipam_pool_id
+      {
+        addressSpace = merge(
+          each.value.use_ipam ? {
+            ipamPoolPrefixAllocations = [
+              {
+                numberOfIpAddresses = tostring(pow(2, 32 - each.value.ipam_prefix_length))
+                pool = {
+                  id = each.value.hub.spoke_ipam_pool_id
+                }
               }
-            }
-          ]
-        }
-        } : {
-        addressSpace = {
-          addressPrefixes = each.value.address_space
-        }
+            ]
+          } : {},
+          each.value.use_ipam ? {} : {
+            addressPrefixes = each.value.address_space
+          }
+        )
       },
       try(length(each.value.hub.hub_dns_servers), 0) > 0 ? {
         dhcpOptions = {

@@ -31,5 +31,6 @@ variable "hub_environments" {
     hub_dns_servers                             = optional(list(string))
     hub_gateway_route_table_resource_group_name = optional(string)
     hub_gateway_route_table_name                = optional(string)
+    spoke_ipam_pool_id                          = optional(string)
   }))
 }
