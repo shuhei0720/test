@@ -68,7 +68,9 @@ env:
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-  AVNM_IPAM_POOL_RESOURCE_ID: "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/avnm01/ipamPools/pool01"
+  AVNM_IPAM_POOL_RESOURCE_ID_PROD: "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/avnm01/ipamPools/pool01"
+  AVNM_IPAM_POOL_RESOURCE_ID_STG: "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/avnm01/ipamPools/pool01"
+  AVNM_IPAM_POOL_RESOURCE_ID_DEV: "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/avnm01/ipamPools/pool01"
 
 jobs:
   create-pr:
@@ -105,18 +107,23 @@ jobs:
             "本番環境")
               ENV_CODE="prod"
               MANAGEMENT_GROUP_ID="Producrion"
+              IPAM_POOL_RESOURCE_ID='${{ env.AVNM_IPAM_POOL_RESOURCE_ID_PROD }}'
               ;;
             "検証環境")
               ENV_CODE="stg"
               MANAGEMENT_GROUP_ID="Staging"
+              IPAM_POOL_RESOURCE_ID='${{ env.AVNM_IPAM_POOL_RESOURCE_ID_STG }}'
               ;;
             "開発環境")
               ENV_CODE="dev"
               MANAGEMENT_GROUP_ID="Sandbox"
+              IPAM_POOL_RESOURCE_ID='${{ env.AVNM_IPAM_POOL_RESOURCE_ID_DEV }}'
               ;;
             *)
               ENV_CODE="$ENV_RAW"
               MANAGEMENT_GROUP_ID="$ENV_RAW"
+              echo "Unsupported environment: $ENV_RAW" >&2
+              exit 1
               ;;
           esac
 
@@ -140,6 +147,7 @@ jobs:
           echo "rg_alert_name=$RG_ALERT_NAME" >> "$GITHUB_OUTPUT"
           echo "vnet_name=$VNET_NAME" >> "$GITHUB_OUTPUT"
           echo "static_cidr_name=$STATIC_CIDR_NAME" >> "$GITHUB_OUTPUT"
+          echo "ipam_pool_resource_id=$IPAM_POOL_RESOURCE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Allocate VNet CIDR from AVNM IPAM
         id: ipam
@@ -149,18 +157,15 @@ jobs:
 
           CONFIG_PATTERN='${{ inputs.configuration_pattern }}'
           CUSTOM_VNET_CIDR='${{ inputs.custom_vnet_cidr }}'
-          IPAM_POOL_ID='${{ env.AVNM_IPAM_POOL_RESOURCE_ID }}'
+          IPAM_POOL_ID='${{ steps.vars.outputs.ipam_pool_resource_id }}'
           STATIC_CIDR_NAME='${{ steps.vars.outputs.static_cidr_name }}'
           API_VERSION='2024-05-01'
 
           if [ -z "$IPAM_POOL_ID" ]; then
-            echo "AVNM_IPAM_POOL_RESOURCE_ID is required" >&2
+            echo "IPAM pool resource id is required" >&2
             exit 1
           fi
 
-          # パターン④:
-          # - 10.0.0.0/22 のような具体CIDRならそのまま使う
-          # - /22 のようなプレフィックス指定なら AVNM から払い出す
           if [[ "$CONFIG_PATTERN" == *"パターン④"* ]]; then
             if [ -z "$CUSTOM_VNET_CIDR" ]; then
               echo "custom_vnet_cidr is required for パターン④" >&2
