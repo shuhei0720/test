@@ -241,8 +241,6 @@ resource "azapi_resource" "vending_vnet" {
     )
   }
 
-  response_export_values = ["*"]
-
   depends_on = [azapi_resource.vending_resource_groups]
 
   lifecycle { ignore_changes = all }
@@ -293,14 +291,6 @@ resource "azapi_resource" "vending_subnets" {
         }
       ]
     }
-  }
-
-  response_export_values = ["*"]
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
   }
 
   depends_on = [
