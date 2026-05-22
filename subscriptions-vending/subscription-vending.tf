@@ -661,12 +661,18 @@ resource "azapi_update_resource" "vending_subnets_association" {
   body = {
     properties = merge(
       {
-        addressPrefixes                   = data.azapi_resource.vending_subnet_read[each.key].output.properties.addressPrefixes
-        ipamPoolPrefixAllocations         = data.azapi_resource.vending_subnet_read[each.key].output.properties.ipamPoolPrefixAllocations
-        delegations                       = try(data.azapi_resource.vending_subnet_read[each.key].output.properties.delegations, [])
-        privateEndpointNetworkPolicies    = try(data.azapi_resource.vending_subnet_read[each.key].output.properties.privateEndpointNetworkPolicies, "Disabled")
+        defaultOutboundAccess = false
+        ipamPoolPrefixAllocations = [
+          {
+            numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
+            pool = {
+              id = each.value.ipam_pool_id
+            }
+          }
+        ]
+        delegations = try(data.azapi_resource.vending_subnet_read[each.key].output.properties.delegations, [])
+        privateEndpointNetworkPolicies = try(data.azapi_resource.vending_subnet_read[each.key].output.properties.privateEndpointNetworkPolicies, "Disabled")
         privateLinkServiceNetworkPolicies = try(data.azapi_resource.vending_subnet_read[each.key].output.properties.privateLinkServiceNetworkPolicies, "Enabled")
-        defaultOutboundAccess             = false
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
         routeTable = {
