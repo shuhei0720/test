@@ -2,7 +2,6 @@
 # Subscription Creation
 # =============================================================================
 
-# YAMLに subscription_id がないものだけ新規サブスクリプションを作成
 resource "azurerm_subscription" "vending" {
   for_each = local.subscriptions_to_create
 
@@ -13,7 +12,6 @@ resource "azurerm_subscription" "vending" {
   tags              = local.subscriptions[each.key].tags
 }
 
-# 作成直後の Azure 側の反映待ち
 resource "time_sleep" "wait_for_subscription" {
   for_each = local.subscriptions_to_create
 
@@ -25,7 +23,6 @@ resource "time_sleep" "wait_for_subscription" {
 # Management Group Association
 # =============================================================================
 
-# 新規作成したサブスクリプションを管理グループに紐付け
 resource "azapi_resource" "vending_mg_association" {
   for_each = local.subscriptions_to_create
 
@@ -40,7 +37,6 @@ resource "azapi_resource" "vending_mg_association" {
   }
 }
 
-# 既存サブスクリプションも管理グループに紐付け
 resource "azapi_resource" "vending_mg_association_existing" {
   for_each = local.subscriptions_with_ids
 
@@ -59,7 +55,6 @@ resource "azapi_resource" "vending_mg_association_existing" {
 # RBAC Assignments
 # =============================================================================
 
-# UPN から object_id を引く
 data "azuread_user" "vending_rbac_users" {
   for_each = {
     for pair in flatten([
@@ -75,7 +70,6 @@ data "azuread_user" "vending_rbac_users" {
   user_principal_name = each.value.upn
 }
 
-# User Access Administrator を subscription スコープで付与
 resource "azurerm_role_assignment" "vending_user_access_administrator" {
   for_each = data.azuread_user.vending_rbac_users
 
@@ -88,7 +82,6 @@ resource "azurerm_role_assignment" "vending_user_access_administrator" {
 # Resource Groups
 # =============================================================================
 
-# network / alert 用 RG を作成
 resource "azapi_resource" "vending_resource_groups" {
   for_each = local.vending_resource_groups
 
@@ -107,7 +100,6 @@ resource "azapi_resource" "vending_resource_groups" {
 # Health Alert
 # =============================================================================
 
-# 通知先 Action Group
 resource "azapi_resource" "spoke_action_group" {
   for_each = local.vending_with_alerts
 
@@ -136,7 +128,6 @@ resource "azapi_resource" "spoke_action_group" {
   lifecycle { ignore_changes = all }
 }
 
-# Service Health の Activity Log Alert
 resource "azapi_resource" "service_health" {
   for_each = local.vending_with_alerts
 
@@ -212,7 +203,6 @@ resource "azurerm_consumption_budget_subscription" "vending" {
 # VNet
 # =============================================================================
 
-# Spoke VNet 本体を作成
 resource "azapi_resource" "vending_vnet" {
   for_each = local.vending_with_vnet
 
@@ -222,27 +212,42 @@ resource "azapi_resource" "vending_vnet" {
   location  = each.value.location
   tags      = each.value.tags
 
-body = {
-  properties = merge(
-    {
-      addressSpace = {
-        addressPrefixes = each.value.address_space
-      }
-    },
-    try(length(each.value.hub.hub_dns_servers), 0) > 0 ? {
-      dhcpOptions = {
-        dnsServers = each.value.hub.hub_dns_servers
-      }
-    } : {}
-  )
-}
+  schema_validation_enabled = false
+
+  body = {
+    properties = merge(
+      {
+        addressSpace = merge(
+          each.value.use_ipam ? {
+            ipamPoolPrefixAllocations = [
+              {
+                numberOfIpAddresses = tostring(pow(2, 32 - each.value.ipam_prefix_length))
+                pool = {
+                  id = each.value.hub.spoke_ipam_pool_id
+                }
+              }
+            ]
+          } : {},
+          each.value.use_ipam ? {} : {
+            addressPrefixes = each.value.address_space
+          }
+        )
+      },
+      try(length(each.value.hub.hub_dns_servers), 0) > 0 ? {
+        dhcpOptions = {
+          dnsServers = each.value.hub.hub_dns_servers
+        }
+      } : {}
+    )
+  }
+
+  response_export_values = ["properties.addressSpace.addressPrefixes"]
 
   depends_on = [azapi_resource.vending_resource_groups]
 
   lifecycle { ignore_changes = all }
 }
 
-# DNSサーバーだけは別PATCHで管理
 resource "azapi_update_resource" "vending_vnet_dns" {
   for_each = {
     for k, v in local.vending_with_vnet : k => v
@@ -267,7 +272,6 @@ resource "azapi_update_resource" "vending_vnet_dns" {
 # NSG
 # =============================================================================
 
-# PrivateSubnet 用 NSG
 resource "azapi_resource" "vending_nsg_private" {
   for_each = local.vending_nsg_private
 
@@ -315,7 +319,6 @@ resource "azapi_resource" "vending_nsg_private" {
   lifecycle { ignore_changes = all }
 }
 
-# ProtectSubnet 用 NSG
 resource "azapi_resource" "vending_nsg_protect" {
   for_each = local.vending_nsg_protect
 
@@ -337,7 +340,7 @@ resource "azapi_resource" "vending_nsg_protect" {
             protocol                 = "*"
             sourcePortRange          = "*"
             destinationPortRange     = "*"
-            sourceAddressPrefix      = each.value.private_subnet.effective_address_prefix
+            sourceAddressPrefix      = local.private_subnet_map[each.key].effective_address_prefix
             destinationAddressPrefix = "*"
           }
         },
@@ -367,7 +370,6 @@ resource "azapi_resource" "vending_nsg_protect" {
 # Route Table
 # =============================================================================
 
-# AGW 用 RT
 resource "azapi_resource" "vending_rt_agw" {
   for_each = local.vending_rt_agw
 
@@ -383,9 +385,9 @@ resource "azapi_resource" "vending_rt_agw" {
         {
           name = "ToFW"
           properties = {
-            addressPrefix    = each.value.private_subnet.effective_address_prefix
+            addressPrefix    = local.private_subnet_map[each.key].effective_address_prefix
             nextHopType      = "VirtualAppliance"
-            nextHopIpAddress = each.value.spoke_fw_ip
+            nextHopIpAddress = local.spoke_fw_ip_map[each.key]
           }
         }
       ]
@@ -397,7 +399,6 @@ resource "azapi_resource" "vending_rt_agw" {
   lifecycle { ignore_changes = [body] }
 }
 
-# PrivateSubnet 用 RT
 resource "azapi_resource" "vending_rt_private" {
   for_each = local.vending_rt_private
 
@@ -421,13 +422,13 @@ resource "azapi_resource" "vending_rt_private" {
             }
           }
         ],
-        each.value.agw_subnet != null && each.value.spoke_fw_ip != null ? [
+        try(local.agw_subnet_map[each.key], null) != null && try(local.spoke_fw_ip_map[each.key], null) != null ? [
           {
             name = "toAFW"
             properties = {
-              addressPrefix    = each.value.agw_subnet.effective_address_prefix
+              addressPrefix    = local.agw_subnet_map[each.key].effective_address_prefix
               nextHopType      = "VirtualAppliance"
-              nextHopIpAddress = each.value.spoke_fw_ip
+              nextHopIpAddress = local.spoke_fw_ip_map[each.key]
             }
           }
         ] : []
@@ -440,7 +441,6 @@ resource "azapi_resource" "vending_rt_private" {
   lifecycle { ignore_changes = [body] }
 }
 
-# ProtectSubnet 用 RT
 resource "azapi_resource" "vending_rt_protect" {
   for_each = local.vending_rt_protect
 
@@ -475,7 +475,6 @@ resource "azapi_resource" "vending_rt_protect" {
 # Subnets
 # =============================================================================
 
-# サブネットごとに NSG / RT を条件付きで関連付け
 resource "azapi_resource" "vending_subnets" {
   for_each = local.vending_subnets
 
@@ -531,84 +530,84 @@ resource "azapi_resource" "vending_subnets" {
   lifecycle { ignore_changes = all }
 }
 
-# =============================================================================
-# Spoke -> Hub Peering
-# =============================================================================
+# # =============================================================================
+# # Spoke -> Hub Peering
+# # =============================================================================
 
-resource "azapi_resource" "vending_spoke_to_hub" {
-  for_each = local.vending_with_peering
+# resource "azapi_resource" "vending_spoke_to_hub" {
+#   for_each = local.vending_with_peering
 
-  type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
-  name      = "peer-${each.value.vnet_name}-to-hub"
-  parent_id = azapi_resource.vending_vnet[each.key].id
+#   type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
+#   name      = "peer-${each.value.vnet_name}-to-hub"
+#   parent_id = azapi_resource.vending_vnet[each.key].id
 
-  body = {
-    properties = {
-      remoteVirtualNetwork = {
-        id = each.value.hub.hub_virtual_network_id
-      }
-      allowForwardedTraffic     = true
-      allowVirtualNetworkAccess = true
-      useRemoteGateways         = each.value.use_hub_gateway
-    }
-  }
+#   body = {
+#     properties = {
+#       remoteVirtualNetwork = {
+#         id = each.value.hub.hub_virtual_network_id
+#       }
+#       allowForwardedTraffic     = true
+#       allowVirtualNetworkAccess = true
+#       useRemoteGateways         = each.value.use_hub_gateway
+#     }
+#   }
 
-  retry = {
-    error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress", "RemoteVnetHasNoGateways"]
-    interval_seconds     = 30
-    max_interval_seconds = 300
-  }
+#   retry = {
+#     error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress", "RemoteVnetHasNoGateways"]
+#     interval_seconds     = 30
+#     max_interval_seconds = 300
+#   }
 
-  depends_on = [azapi_resource.vending_subnets]
-}
+#   depends_on = [azapi_resource.vending_subnets]
+# }
 
-# =============================================================================
-# Hub -> Spoke Peering
-# =============================================================================
+# # =============================================================================
+# # Hub -> Spoke Peering
+# # =============================================================================
 
-resource "azapi_resource" "vending_hub_to_spoke" {
-  for_each = local.vending_with_peering
+# resource "azapi_resource" "vending_hub_to_spoke" {
+#   for_each = local.vending_with_peering
 
-  type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
-  name      = "peer-hub-to-${each.value.vnet_name}"
-  parent_id = "${each.value.hub.hub_virtual_network_parent_id}/providers/Microsoft.Network/virtualNetworks/${each.value.hub.hub_virtual_network_name}"
+#   type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
+#   name      = "peer-hub-to-${each.value.vnet_name}"
+#   parent_id = "${each.value.hub.hub_virtual_network_parent_id}/providers/Microsoft.Network/virtualNetworks/${each.value.hub.hub_virtual_network_name}"
 
-  body = {
-    properties = {
-      remoteVirtualNetwork = {
-        id = azapi_resource.vending_vnet[each.key].id
-      }
-      allowForwardedTraffic     = true
-      allowVirtualNetworkAccess = true
-      allowGatewayTransit       = true
-    }
-  }
+#   body = {
+#     properties = {
+#       remoteVirtualNetwork = {
+#         id = azapi_resource.vending_vnet[each.key].id
+#       }
+#       allowForwardedTraffic     = true
+#       allowVirtualNetworkAccess = true
+#       allowGatewayTransit       = true
+#     }
+#   }
 
-  retry = {
-    error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress"]
-    interval_seconds     = 30
-    max_interval_seconds = 300
-  }
+#   retry = {
+#     error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress"]
+#     interval_seconds     = 30
+#     max_interval_seconds = 300
+#   }
 
-  depends_on = [azapi_resource.vending_subnets]
-}
+#   depends_on = [azapi_resource.vending_subnets]
+# }
 
-# =============================================================================
-# GatewaySubnet Route Table routes
-# =============================================================================
+# # =============================================================================
+# # GatewaySubnet Route Table routes
+# # =============================================================================
 
-resource "azapi_resource" "gateway_to_vending" {
-  for_each = local.vending_spoke_routes_with_gateway
+# resource "azapi_resource" "gateway_to_vending" {
+#   for_each = local.vending_spoke_routes_with_gateway
 
-  type      = "Microsoft.Network/routeTables/routes@2024-01-01"
-  name      = each.value.name
-  parent_id = "/subscriptions/${var.hub_environments[each.value.env_short_name].hub_subscription_id}/resourceGroups/${var.hub_environments[each.value.env_short_name].hub_gateway_route_table_resource_group_name}/providers/Microsoft.Network/routeTables/${var.hub_environments[each.value.env_short_name].hub_gateway_route_table_name}"
+#   type      = "Microsoft.Network/routeTables/routes@2024-01-01"
+#   name      = each.value.name
+#   parent_id = "/subscriptions/${var.hub_environments[each.value.env_short_name].hub_subscription_id}/resourceGroups/${var.hub_environments[each.value.env_short_name].hub_gateway_route_table_resource_group_name}/providers/Microsoft.Network/routeTables/${var.hub_environments[each.value.env_short_name].hub_gateway_route_table_name}"
 
-  body = {
-    properties = {
-      addressPrefix    = each.value.address_prefix
-      nextHopType      = "VirtualAppliance"
-      nextHopIpAddress = var.hub_environments[each.value.env_short_name].hub_firewall_private_ip
-    }
-  }
-}
+#   body = {
+#     properties = {
+#       addressPrefix    = each.value.address_prefix
+#       nextHopType      = "VirtualAppliance"
+#       nextHopIpAddress = var.hub_environments[each.value.env_short_name].hub_firewall_private_ip
+#     }
+#   }
+# }
