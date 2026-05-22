@@ -212,6 +212,10 @@ jobs:
           retention-days: 30
           overwrite: true
 
+      - name: Wait before post-deploy tests
+        if: steps.terraform_apply.outputs.exit_code == '0'
+        run: sleep 90
+
       - name: Run post-deploy tests
         if: steps.terraform_apply.outputs.exit_code == '0'
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
@@ -264,7 +268,7 @@ jobs:
             echo "moved=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          mv subscriptions/*.yaml created/
+          mv subscriptions/*.yaml subscriptions/created/
           echo "moved=true" >> "$GITHUB_OUTPUT"
 
       - name: Create pull request for moved YAMLs
@@ -278,14 +282,14 @@ jobs:
           title: "Move applied subscription YAMLs to created"
           body: |
             ## 概要
-            Terraform Apply 成功後、処理済みの subscription YAML を `subscriptions/` から `created/` へ移動しました。
+            Terraform Apply 成功後、処理済みの subscription YAML を `subscriptions/` から `subscriptions/created/` へ移動しました。
 
             ## 背景
             - このリポジトリではサブスクリプション払い出しを使い捨て運用とする
             - local state のため、再実行対象から外すために YAML を退避する
 
             ## 変更内容
-            - `${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/*.yaml` → `${{ env.TERRAFORM_WORKING_DIR }}/created/` に移動
+            - `${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/*.yaml` → `${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/created/` に移動
 
             ## 備考
             - この PR は Terraform CD workflow により自動作成されています。
