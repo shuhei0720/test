@@ -269,11 +269,11 @@ resource "azapi_update_resource" "vending_vnet_dns" {
 }
 
 # =============================================================================
-# Subnets (ordered: AGW -> FW -> Private -> Protect)
+# Subnets
 # =============================================================================
 
-resource "azapi_resource" "vending_subnets_agw" {
-  for_each = local.vending_subnets_agw
+resource "azapi_resource" "vending_subnets" {
+  for_each = local.vending_subnets
 
   type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
   name      = each.value.name
@@ -301,109 +301,9 @@ resource "azapi_resource" "vending_subnets_agw" {
     max_interval_seconds = 60
   }
 
-  depends_on = [azapi_update_resource.vending_vnet_dns]
-
-  lifecycle { ignore_changes = all }
-}
-
-resource "azapi_resource" "vending_subnets_fw" {
-  for_each = local.vending_subnets_fw
-
-  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  name      = each.value.name
-  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      defaultOutboundAccess = false
-      ipamPoolPrefixAllocations = [
-        {
-          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-          pool = {
-            id = each.value.ipam_pool_id
-          }
-        }
-      ]
-    }
-  }
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
-  }
-
-  depends_on = [azapi_resource.vending_subnets_agw]
-
-  lifecycle { ignore_changes = all }
-}
-
-resource "azapi_resource" "vending_subnets_private" {
-  for_each = local.vending_subnets_private
-
-  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  name      = each.value.name
-  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      defaultOutboundAccess = false
-      ipamPoolPrefixAllocations = [
-        {
-          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-          pool = {
-            id = each.value.ipam_pool_id
-          }
-        }
-      ]
-    }
-  }
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
-  }
-
-  depends_on = [azapi_resource.vending_subnets_fw]
-
-  lifecycle { ignore_changes = all }
-}
-
-resource "azapi_resource" "vending_subnets_protect" {
-  for_each = local.vending_subnets_protect
-
-  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  name      = each.value.name
-  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      defaultOutboundAccess = false
-      ipamPoolPrefixAllocations = [
-        {
-          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-          pool = {
-            id = each.value.ipam_pool_id
-          }
-        }
-      ]
-    }
-  }
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
-  }
-
-  depends_on = [azapi_resource.vending_subnets_private]
+  depends_on = [
+    azapi_update_resource.vending_vnet_dns
+  ]
 
   lifecycle { ignore_changes = all }
 }
@@ -411,22 +311,12 @@ resource "azapi_resource" "vending_subnets_protect" {
 data "azapi_resource" "vending_subnet_read" {
   for_each = local.vending_subnets
 
-  type = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  resource_id = coalesce(
-    try(azapi_resource.vending_subnets_agw[each.key].id, null),
-    try(azapi_resource.vending_subnets_fw[each.key].id, null),
-    try(azapi_resource.vending_subnets_private[each.key].id, null),
-    try(azapi_resource.vending_subnets_protect[each.key].id, null)
-  )
+  type        = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  resource_id = azapi_resource.vending_subnets[each.key].id
 
   response_export_values = ["*"]
 
-  depends_on = [
-    azapi_resource.vending_subnets_agw,
-    azapi_resource.vending_subnets_fw,
-    azapi_resource.vending_subnets_private,
-    azapi_resource.vending_subnets_protect
-  ]
+  depends_on = [azapi_resource.vending_subnets]
 }
 
 # =============================================================================
@@ -526,6 +416,7 @@ resource "azapi_resource" "vending_nsg_protect" {
 
   depends_on = [
     azapi_resource.vending_resource_groups,
+    azapi_resource.vending_subnets,
     data.azapi_resource.vending_subnet_read
   ]
 
@@ -564,6 +455,7 @@ resource "azapi_resource" "vending_rt_agw" {
 
   depends_on = [
     azapi_resource.vending_resource_groups,
+    azapi_resource.vending_subnets,
     data.azapi_resource.vending_subnet_read
   ]
 
@@ -611,6 +503,7 @@ resource "azapi_resource" "vending_rt_private" {
 
   depends_on = [
     azapi_resource.vending_resource_groups,
+    azapi_resource.vending_subnets,
     data.azapi_resource.vending_subnet_read
   ]
 
@@ -650,13 +543,8 @@ resource "azapi_resource" "vending_rt_protect" {
 resource "azapi_update_resource" "vending_subnets_association" {
   for_each = local.vending_subnets
 
-  type = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  resource_id = coalesce(
-    try(azapi_resource.vending_subnets_agw[each.key].id, null),
-    try(azapi_resource.vending_subnets_fw[each.key].id, null),
-    try(azapi_resource.vending_subnets_private[each.key].id, null),
-    try(azapi_resource.vending_subnets_protect[each.key].id, null)
-  )
+  type        = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  resource_id = azapi_resource.vending_subnets[each.key].id
 
   body = {
     properties = merge(
@@ -694,7 +582,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
   }
 
   depends_on = [
-    data.azapi_resource.vending_subnet_read,
+    azapi_resource.vending_subnets,
     azapi_resource.vending_nsg_private,
     azapi_resource.vending_nsg_protect,
     azapi_resource.vending_rt_agw,
