@@ -534,8 +534,6 @@ resource "azapi_update_resource" "vending_subnets_association" {
   type        = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
   resource_id = azapi_resource.vending_subnets[each.key].id
 
-  schema_validation_enabled = false
-
   body = {
     properties = merge(
       {
@@ -580,6 +578,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
     azapi_resource.vending_rt_protect
   ]
 }
+
 
 # # =============================================================================
 # # Spoke -> Hub Peering
