@@ -269,6 +269,48 @@ resource "azapi_update_resource" "vending_vnet_dns" {
 }
 
 # =============================================================================
+# Subnets
+# =============================================================================
+
+resource "azapi_resource" "vending_subnets" {
+  for_each = local.vending_subnets
+
+  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  name      = each.value.name
+  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
+
+  schema_validation_enabled = false
+
+  body = {
+    properties = {
+      defaultOutboundAccess = false
+      ipamPoolPrefixAllocations = [
+        {
+          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
+          pool = {
+            id = each.value.ipam_pool_id
+          }
+        }
+      ]
+    }
+  }
+
+  response_export_values = ["properties.addressPrefix"]
+
+  retry = {
+    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
+    interval_seconds     = 10
+    max_interval_seconds = 60
+  }
+
+  depends_on = [
+    azapi_update_resource.vending_vnet_dns
+  ]
+
+  lifecycle { ignore_changes = all }
+}
+
+# =============================================================================
 # NSG
 # =============================================================================
 
@@ -480,48 +522,6 @@ resource "azapi_resource" "vending_rt_protect" {
   lifecycle { ignore_changes = [body] }
 }
 
-# =============================================================================
-# Subnets
-# =============================================================================
-
-resource "azapi_resource" "vending_subnets" {
-  for_each = local.vending_subnets
-
-  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  name      = each.value.name
-  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      defaultOutboundAccess = false
-      ipamPoolPrefixAllocations = [
-        {
-          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-          pool = {
-            id = each.value.ipam_pool_id
-          }
-        }
-      ]
-    }
-  }
-
-  response_export_values = ["properties.addressPrefix"]
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
-  }
-
-  depends_on = [
-    azapi_update_resource.vending_vnet_dns
-  ]
-
-  lifecycle { ignore_changes = all }
-}
-
 resource "azapi_update_resource" "vending_subnets_association" {
   for_each = local.vending_subnets
 
@@ -531,7 +531,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
   body = {
     properties = merge(
       {
-        addressPrefix         = azapi_resource.vending_subnets[each.key].output.properties.addressPrefix
+        addressPrefix         = azapi_resource.vending_subnets[each.key].output.addressPrefix
         defaultOutboundAccess = false
       },
       each.value.name == "ApplicationGatewaySubnet" ? {

@@ -31,7 +31,7 @@ locals {
       tags                  = try(v.tags, {})
       budget                = try(tonumber(v.budget), null)
       enrollment_account_id = var.enrollment_account_id_map[v.tags.cost_center]
-      billing_scope_id      = "/providers/Microsoft.Billing/billingAccounts/${var.billing_account_id}/enrollmentAccounts/${var.enrollment_account_id_map[v.tags.cost_center]}"
+      billing_scope_id      = "/providers/Microsoft.Billing/billingAccounts/6d92e1a7-44ef-5b9d-fe85-600e31fecd27:7ffb2b72-d71a-46c2-ac74-10566d437c9e_2019-05-31/billingProfiles/KXVV-QQVV-BG7-PGB/invoiceSections/b5316415-c236-41e7-8237-fcf186346a73"
 
       network_rg_name     = v.resource_groups.network.name
       network_rg_location = try(v.resource_groups.network.location, v.location)
@@ -95,7 +95,7 @@ locals {
   resolved_vnet_address_space = {
     for k, v in local.subscriptions : k => (
       v.use_ipam
-      ? azapi_resource.vending_vnet[k].output.properties.addressSpace.addressPrefixes[0]
+      ? azapi_resource.vending_vnet[k].output.addressSpace.addressPrefixes[0]
       : v.address_space[0]
     )
     if v.has_vnet
@@ -126,7 +126,7 @@ locals {
 
   # 作成後の subnet 実CIDR
   resolved_subnet_prefixes = {
-    for k, v in local.vending_subnets : k => azapi_resource.vending_subnets[k].output.properties.addressPrefix
+    for k, v in local.vending_subnets : k => azapi_resource.vending_subnets[k].output.addressPrefix
   }
 
   # 特定サブネットを名前で引けるようにする
