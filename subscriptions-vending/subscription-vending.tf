@@ -241,7 +241,7 @@ resource "azapi_resource" "vending_vnet" {
     )
   }
 
-  response_export_values = ["properties.addressSpace.addressPrefixes"]
+  response_export_values = ["*"]
 
   depends_on = [azapi_resource.vending_resource_groups]
 
@@ -295,7 +295,7 @@ resource "azapi_resource" "vending_subnets" {
     }
   }
 
-  response_export_values = ["properties.addressPrefix"]
+  response_export_values = ["*"]
 
   retry = {
     error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
@@ -531,7 +531,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
   body = {
     properties = merge(
       {
-        addressPrefix         = azapi_resource.vending_subnets[each.key].output["properties.addressPrefix"]
+        addressPrefix         = azapi_resource.vending_subnets[each.key].output.properties.addressPrefix
         defaultOutboundAccess = false
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
