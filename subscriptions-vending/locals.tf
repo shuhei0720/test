@@ -95,7 +95,7 @@ locals {
   resolved_vnet_address_space = {
     for k, v in local.subscriptions : k => (
       v.use_ipam
-      ? azapi_resource.vending_vnet[k].output.addressSpace.addressPrefixes[0]
+      ? azapi_resource.vending_vnet[k].output["properties.addressSpace.addressPrefixes"][0]
       : v.address_space[0]
     )
     if v.has_vnet
@@ -126,10 +126,9 @@ locals {
 
   # 作成後の subnet 実CIDR
   resolved_subnet_prefixes = {
-    for k, v in local.vending_subnets : k => azapi_resource.vending_subnets[k].output.addressPrefix
+    for k, v in local.vending_subnets : k => azapi_resource.vending_subnets[k].output["properties.addressPrefix"]
   }
 
-  # 特定サブネットを名前で引けるようにする
   firewall_subnet_map = {
     for k, v in local.subscriptions : k => (
       contains(try(local.requested_subnet_names[k], []), "AzureFirewallSubnet") ? {
@@ -170,14 +169,12 @@ locals {
     if v.has_vnet
   }
 
-  # AzureFirewallSubnet の 4番目のIPを Spoke FW IP として使う
   spoke_fw_ip_map = {
     for k, v in local.firewall_subnet_map : k => (
       v != null ? cidrhost(v.effective_address_prefix, 4) : null
     )
   }
 
-  # RG 用の for_each map
   vending_resource_groups = merge([
     for k, v in local.subscriptions : {
       "${k}/network" = {
@@ -197,7 +194,6 @@ locals {
     }
   ]...)
 
-  # 通知系用
   vending_with_alerts = {
     for k, v in local.subscriptions : k => {
       sub_id            = local.resolved_subscription_ids[k]
@@ -212,7 +208,6 @@ locals {
     if length(v.alert_contacts) > 0
   }
 
-  # 予算アラート用
   vending_with_budget = {
     for k, v in local.subscriptions : k => {
       sub_id            = local.resolved_subscription_ids[k]
@@ -224,19 +219,16 @@ locals {
     if v.budget != null && length(v.alert_contacts) > 0
   }
 
-  # VNetありのもの
   vending_with_vnet = {
     for k, v in local.subscriptions : k => v
     if v.has_vnet
   }
 
-  # Peeringありのもの
   vending_with_peering = {
     for k, v in local.subscriptions : k => v
     if v.has_vnet && v.has_peering
   }
 
-  # Hub Gateway 側に追加する Spoke ルート
   vending_spoke_routes = flatten([
     for k, v in local.subscriptions : [
       for i, cidr in [local.resolved_vnet_address_space[k]] : {
@@ -248,7 +240,6 @@ locals {
     ] if v.has_vnet && v.has_peering
   ])
 
-  # 各種サブネットが存在する場合だけ対象化
   vending_nsg_private = {
     for k, v in local.subscriptions : k => v
     if contains(try(local.requested_subnet_names[k], []), "PrivateSubnet")
@@ -276,7 +267,6 @@ locals {
     if contains(try(local.requested_subnet_names[k], []), "ProtectSubnet")
   }
 
-  # ER なし環境では gateway route を作らない
   vending_spoke_routes_with_gateway = {
     for r in local.vending_spoke_routes : r.key => r
     if try(var.hub_environments[r.env_short_name].hub_gateway_route_table_resource_group_name, null) != null
