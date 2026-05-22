@@ -2,6 +2,7 @@
 # Subscription Creation
 # =============================================================================
 
+# subscription_id 未指定の YAML だけ新規サブスクリプションを作成
 resource "azurerm_subscription" "vending" {
   for_each = local.subscriptions_to_create
 
@@ -12,6 +13,7 @@ resource "azurerm_subscription" "vending" {
   tags              = local.subscriptions[each.key].tags
 }
 
+# 新規作成直後の API 反映待ち
 resource "time_sleep" "wait_for_subscription" {
   for_each = local.subscriptions_to_create
 
@@ -23,6 +25,7 @@ resource "time_sleep" "wait_for_subscription" {
 # Management Group Association
 # =============================================================================
 
+# 新規作成したサブスクリプションを Management Group に紐付け
 resource "azapi_resource" "vending_mg_association" {
   for_each = local.subscriptions_to_create
 
@@ -37,6 +40,7 @@ resource "azapi_resource" "vending_mg_association" {
   }
 }
 
+# 既存サブスクリプションも Management Group に紐付け
 resource "azapi_resource" "vending_mg_association_existing" {
   for_each = local.subscriptions_with_ids
 
@@ -55,6 +59,7 @@ resource "azapi_resource" "vending_mg_association_existing" {
 # RBAC Assignments
 # =============================================================================
 
+# UPN から Azure AD User を引く
 data "azuread_user" "vending_rbac_users" {
   for_each = {
     for pair in flatten([
@@ -70,6 +75,7 @@ data "azuread_user" "vending_rbac_users" {
   user_principal_name = each.value.upn
 }
 
+# 対象ユーザーへ subscription scope の RBAC を付与
 resource "azurerm_role_assignment" "vending_user_access_administrator" {
   for_each = data.azuread_user.vending_rbac_users
 
@@ -82,6 +88,7 @@ resource "azurerm_role_assignment" "vending_user_access_administrator" {
 # Resource Groups
 # =============================================================================
 
+# network / alert 用 Resource Group を作成
 resource "azapi_resource" "vending_resource_groups" {
   for_each = local.vending_resource_groups
 
@@ -100,6 +107,7 @@ resource "azapi_resource" "vending_resource_groups" {
 # Health Alert
 # =============================================================================
 
+# 通知先 Action Group
 resource "azapi_resource" "spoke_action_group" {
   for_each = local.vending_with_alerts
 
@@ -128,6 +136,7 @@ resource "azapi_resource" "spoke_action_group" {
   lifecycle { ignore_changes = all }
 }
 
+# Service Health 用 Activity Log Alert
 resource "azapi_resource" "service_health" {
   for_each = local.vending_with_alerts
 
@@ -170,6 +179,7 @@ resource "azapi_resource" "service_health" {
 # Budget Alert
 # =============================================================================
 
+# Subscription 単位の月次予算
 resource "azurerm_consumption_budget_subscription" "vending" {
   for_each = local.vending_with_budget
 
@@ -203,6 +213,7 @@ resource "azurerm_consumption_budget_subscription" "vending" {
 # VNet
 # =============================================================================
 
+# VNet 本体を作成
 resource "azapi_resource" "vending_vnet" {
   for_each = local.vending_with_vnet
 
@@ -212,6 +223,7 @@ resource "azapi_resource" "vending_vnet" {
   location  = each.value.location
   tags      = each.value.tags
 
+  # azapi 側 schema が IPAM 拡張に追従していないため無効化
   schema_validation_enabled = false
 
   body = {
@@ -241,6 +253,7 @@ resource "azapi_resource" "vending_vnet" {
     )
   }
 
+  # 実CIDR を locals から参照するため export
   response_export_values = ["properties.addressSpace.addressPrefixes"]
 
   depends_on = [azapi_resource.vending_resource_groups]
@@ -248,6 +261,7 @@ resource "azapi_resource" "vending_vnet" {
   lifecycle { ignore_changes = all }
 }
 
+# VNet 作成後に DNS 設定だけ別 PATCH
 resource "azapi_update_resource" "vending_vnet_dns" {
   for_each = {
     for k, v in local.vending_with_vnet : k => v
@@ -272,6 +286,7 @@ resource "azapi_update_resource" "vending_vnet_dns" {
 # Subnets (ordered: AGW -> FW -> Private -> Protect)
 # =============================================================================
 
+# ApplicationGatewaySubnet を最初に作成
 resource "azapi_resource" "vending_subnets_agw" {
   for_each = local.vending_subnets_agw
 
@@ -306,6 +321,7 @@ resource "azapi_resource" "vending_subnets_agw" {
   lifecycle { ignore_changes = all }
 }
 
+# AzureFirewallSubnet を 2 番目に作成
 resource "azapi_resource" "vending_subnets_fw" {
   for_each = local.vending_subnets_fw
 
@@ -340,6 +356,7 @@ resource "azapi_resource" "vending_subnets_fw" {
   lifecycle { ignore_changes = all }
 }
 
+# PrivateSubnet を 3 番目に作成
 resource "azapi_resource" "vending_subnets_private" {
   for_each = local.vending_subnets_private
 
@@ -374,6 +391,7 @@ resource "azapi_resource" "vending_subnets_private" {
   lifecycle { ignore_changes = all }
 }
 
+# ProtectSubnet を最後に作成
 resource "azapi_resource" "vending_subnets_protect" {
   for_each = local.vending_subnets_protect
 
@@ -408,6 +426,7 @@ resource "azapi_resource" "vending_subnets_protect" {
   lifecycle { ignore_changes = all }
 }
 
+# 作成済み Subnet の実CIDRや現在設定を取得
 data "azapi_resource" "vending_subnet_read" {
   for_each = local.vending_subnets
 
@@ -433,6 +452,7 @@ data "azapi_resource" "vending_subnet_read" {
 # NSG
 # =============================================================================
 
+# PrivateSubnet 用 NSG
 resource "azapi_resource" "vending_nsg_private" {
   for_each = local.vending_nsg_private
 
@@ -480,6 +500,7 @@ resource "azapi_resource" "vending_nsg_private" {
   lifecycle { ignore_changes = all }
 }
 
+# ProtectSubnet 用 NSG
 resource "azapi_resource" "vending_nsg_protect" {
   for_each = local.vending_nsg_protect
 
@@ -536,6 +557,7 @@ resource "azapi_resource" "vending_nsg_protect" {
 # Route Table
 # =============================================================================
 
+# AGW 用 Route Table
 resource "azapi_resource" "vending_rt_agw" {
   for_each = local.vending_rt_agw
 
@@ -570,6 +592,7 @@ resource "azapi_resource" "vending_rt_agw" {
   lifecycle { ignore_changes = [body] }
 }
 
+# PrivateSubnet 用 Route Table
 resource "azapi_resource" "vending_rt_private" {
   for_each = local.vending_rt_private
 
@@ -617,6 +640,7 @@ resource "azapi_resource" "vending_rt_private" {
   lifecycle { ignore_changes = [body] }
 }
 
+# ProtectSubnet 用 Route Table
 resource "azapi_resource" "vending_rt_protect" {
   for_each = local.vending_rt_protect
 
@@ -647,6 +671,12 @@ resource "azapi_resource" "vending_rt_protect" {
   lifecycle { ignore_changes = [body] }
 }
 
+# =============================================================================
+# Subnet association (RT / NSG)
+# =============================================================================
+
+# Subnet へ RT / NSG を後付け
+# ※ IPAM 情報を保持したい場合は、必要プロパティを明示的に含めて PUT する必要あり
 resource "azapi_update_resource" "vending_subnets_association" {
   for_each = local.vending_subnets
 

@@ -51,6 +51,7 @@ locals {
       has_peering     = try(v.virtual_network.hub_peering_enabled, false)
       use_hub_gateway = try(v.virtual_network.use_hub_gateway, false)
 
+      # address_space が /23 など prefix 指定なら IPAM 利用とみなす
       use_ipam = (
         try(v.virtual_network, null) != null &&
         length(try(v.virtual_network.address_space, [])) > 0 &&
@@ -63,6 +64,7 @@ locals {
         startswith(v.virtual_network.address_space[0], "/")
       ) ? tonumber(trimprefix(v.virtual_network.address_space[0], "/")) : null
 
+      # 命名規則
       rt_agw_name      = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-agw-01"
       rt_private_name  = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-private-01"
       rt_protect_name  = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-protect-01"
@@ -101,7 +103,7 @@ locals {
     if v.has_vnet
   }
 
-  # Subnet 定義の canonical map
+  # Subnet 定義の 正規化 map
   subnet_catalog = merge([
     for k, v in local.subscriptions : {
       for s in try(local.subscriptions_raw[k].virtual_network.subnets, []) :
@@ -116,8 +118,10 @@ locals {
     } if v.has_vnet
   ]...)
 
+  # 既存 resource 名との互換
   vending_subnets = local.subnet_catalog
 
+  # Subnet 作成順制御用
   vending_subnets_agw = {
     for k, v in local.subnet_catalog : k => v
     if v.name == "ApplicationGatewaySubnet"
@@ -138,7 +142,7 @@ locals {
     if v.name == "ProtectSubnet"
   }
 
-  # 作成後の subnet 実CIDR
+  # 作成済み Subnet の実CIDR
   resolved_subnet_map = {
     for k, v in local.subnet_catalog : k => {
       sub_key                  = v.sub_key
@@ -147,6 +151,7 @@ locals {
     }
   }
 
+  # 名前別の Subnet 参照マップ
   firewall_subnet_map = {
     for k, v in local.subscriptions : k => local.resolved_subnet_map["${k}/AzureFirewallSubnet"]
     if contains(keys(local.resolved_subnet_map), "${k}/AzureFirewallSubnet")
@@ -167,11 +172,12 @@ locals {
     if contains(keys(local.resolved_subnet_map), "${k}/ProtectSubnet")
   }
 
+  # AzureFirewallSubnet の 4 番目の IP を spoke firewall IP として利用
   spoke_fw_ip_map = {
     for k, v in local.firewall_subnet_map : k => cidrhost(v.effective_address_prefix, 4)
   }
 
-  # RG 用の for_each map
+  # RG 作成用の for_each map
   vending_resource_groups = merge([
     for k, v in local.subscriptions : {
       "${k}/network" = {
@@ -218,13 +224,13 @@ locals {
     if v.budget != null && length(v.alert_contacts) > 0
   }
 
-  # VNetありのもの
+  # VNet を作る用
   vending_with_vnet = {
     for k, v in local.subscriptions : k => v
     if v.has_vnet
   }
 
-  # Peeringありのもの
+  # Peering を作る用
   vending_with_peering = {
     for k, v in local.subscriptions : k => v
     if v.has_vnet && v.has_peering
