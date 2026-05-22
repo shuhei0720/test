@@ -14,6 +14,7 @@ permissions:
   contents: read
   pull-requests: write
   security-events: write
+  actions: read
 
 env:
   ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -98,6 +99,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Derive JIRA issue key
+        id: jira
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(subscriptions/*.yaml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "subscriptions 配下に YAML が見つかりません" >&2
+            exit 1
+          fi
+          JIRA_ISSUE_KEY=$(python -c "import sys,yaml; print(yaml.safe_load(open(sys.argv[1], encoding='utf-8'))['subscription_request']['jira_issue_key'])" "${files[0]}")
+          echo "jira_issue_key=${JIRA_ISSUE_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore previous tfstate artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          github_token: ${{ github.token }}
+          workflow: terraform-cd.yml
+          workflow_conclusion: completed
+          branch: main
+          name: tfstate-${{ steps.jira.outputs.jira_issue_key }}
+          path: ${{ env.TERRAFORM_WORKING_DIR }}
+          if_no_artifact_found: warn
+          search_artifacts: true
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
