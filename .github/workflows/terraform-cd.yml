@@ -276,6 +276,9 @@ jobs:
           branch: "automation/move-applied-subscription-yamls-${{ github.run_id }}"
           base: main
           title: "Move applied subscription YAMLs to created"
+          add-paths: |
+            ${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/*.yaml
+            ${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/created/*.yaml
           body: |
             ## 概要
             Terraform Apply 成功後、処理済みの subscription YAML を `subscriptions/` から `subscriptions/created/` へ移動しました。
