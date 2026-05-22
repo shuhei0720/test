@@ -123,7 +123,7 @@ locals {
             tonumber(replace(s.address_prefix, "/", "")) - tonumber(split("/", local.resolved_vnet_address_space[k])[1]),
             ceil(sum(concat([
               0
-            ], [
+              ], [
               for prev in slice(try(local.subscriptions_raw[k].virtual_network.subnets, []), 0, idx) :
               pow(
                 2,
