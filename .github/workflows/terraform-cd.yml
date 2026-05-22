@@ -99,18 +99,27 @@ jobs:
             echo "インフラは最新の状態です。apply はスキップされます。" >> "$GITHUB_STEP_SUMMARY"
           elif [[ $EXIT_CODE -eq 2 ]]; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            echo "### 📋 Plan: 変更あり — 承認待ち" >> "$GITHUB_STEP_SUMMARY"
+            echo "### 📋 Plan: 変更あり " >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "以下の変更が apply されます。\`Apply\` ジョブの承認で適用してください。" >> "$GITHUB_STEP_SUMMARY"
+            echo "以下の変更が apply されます。\`Apply\` " >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
+            # サマリー行（Plan: X to add, Y to change, Z to destroy）
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep -E '^Plan:|^Changes to Outputs' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
+            # リソース変更一覧
             echo "#### リソース変更一覧" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep -E '^  # .* (will be|must be)' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "<details><summary>📄 Plan 全文（クリックで展開）</summary>" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            head -c 65000 plan-output.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             echo "### ❌ Plan: エラー" >> "$GITHUB_STEP_SUMMARY"
@@ -175,20 +184,6 @@ jobs:
         with:
           name: terraform-plan-${{ needs.plan.outputs.jira_issue_key }}
           path: ${{ env.TERRAFORM_WORKING_DIR }}
-
-      - name: Write Plan Summary
-        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
-        shell: bash
-        run: |
-          echo "### 📋 Plan result" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          grep -E '^Plan:|^Changes to Outputs' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "#### リソース変更一覧" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          grep -E '^  # .* (will be|must be)' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Terraform Apply
         id: terraform_apply

@@ -1,6 +1,6 @@
 subscription_name: "subscription_dev_PHD_tftest005"
 workload_type: "Production"
-management_group_id: "Producrion"
+management_group_id: "TEST-PHDInfraTeam"
 location: "japaneast"
 env_short_name: "dev"
 
