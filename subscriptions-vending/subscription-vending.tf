@@ -411,7 +411,7 @@ resource "azapi_resource" "vending_subnets_protect" {
 data "azapi_resource" "vending_subnet_read" {
   for_each = local.vending_subnets
 
-  type        = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  type = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
   resource_id = coalesce(
     try(azapi_resource.vending_subnets_agw[each.key].id, null),
     try(azapi_resource.vending_subnets_fw[each.key].id, null),
@@ -650,7 +650,7 @@ resource "azapi_resource" "vending_rt_protect" {
 resource "azapi_update_resource" "vending_subnets_association" {
   for_each = local.vending_subnets
 
-  type        = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  type = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
   resource_id = coalesce(
     try(azapi_resource.vending_subnets_agw[each.key].id, null),
     try(azapi_resource.vending_subnets_fw[each.key].id, null),
