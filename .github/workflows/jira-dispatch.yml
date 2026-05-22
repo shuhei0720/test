@@ -1,5 +1,4 @@
 name: jira-dispatch
-run-name: jira-dispatch-${{ inputs.jira_issue_key }}-${{ inputs.environment }}-${{ inputs.service_name }}
 
 on:
   workflow_dispatch:
@@ -63,6 +62,13 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
+
+env:
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AVNM_IPAM_POOL_RESOURCE_ID: "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/avnm01/ipamPools/<pool-name>"
 
 jobs:
   create-pr:
@@ -73,6 +79,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Derive variables
         id: vars
@@ -93,11 +106,11 @@ jobs:
               ENV_CODE="prod"
               MANAGEMENT_GROUP_ID="Producrion"
               ;;
-            "検証(ステージング)環境")
+            "検証環境")
               ENV_CODE="stg"
               MANAGEMENT_GROUP_ID="Staging"
               ;;
-            "開発(サンドボックス)環境")
+            "開発環境")
               ENV_CODE="dev"
               MANAGEMENT_GROUP_ID="Sandbox"
               ;;
@@ -114,6 +127,7 @@ jobs:
           RG_NETWORK_NAME="rg-${SERVICE_SHORT_NAME}-${ENV_CODE}-network-01"
           RG_ALERT_NAME="rg-${SERVICE_SHORT_NAME}-${ENV_CODE}-alert-01"
           VNET_NAME="vnet-${SERVICE_SHORT_NAME}-${ENV_CODE}-network-01"
+          STATIC_CIDR_NAME="${{ inputs.jira_issue_key }}-${SERVICE_SHORT_NAME}-${ENV_CODE}"
 
           echo "billing_company_name=$BILLING_COMPANY_NAME" >> "$GITHUB_OUTPUT"
           echo "billing_company_code=$BILLING_COMPANY_CODE" >> "$GITHUB_OUTPUT"
@@ -125,6 +139,63 @@ jobs:
           echo "rg_network_name=$RG_NETWORK_NAME" >> "$GITHUB_OUTPUT"
           echo "rg_alert_name=$RG_ALERT_NAME" >> "$GITHUB_OUTPUT"
           echo "vnet_name=$VNET_NAME" >> "$GITHUB_OUTPUT"
+          echo "static_cidr_name=$STATIC_CIDR_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Allocate VNet CIDR from AVNM IPAM
+        id: ipam
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONFIG_PATTERN='${{ inputs.configuration_pattern }}'
+          CUSTOM_VNET_CIDR='${{ inputs.custom_vnet_cidr }}'
+          IPAM_POOL_ID='${{ env.AVNM_IPAM_POOL_RESOURCE_ID }}'
+          STATIC_CIDR_NAME='${{ steps.vars.outputs.static_cidr_name }}'
+          API_VERSION='2024-05-01'
+
+          if [[ "$CONFIG_PATTERN" == *"パターン④"* ]]; then
+            if [ -z "$CUSTOM_VNET_CIDR" ]; then
+              echo "custom_vnet_cidr is required for パターン④" >&2
+              exit 1
+            fi
+            echo "vnet_cidr=$CUSTOM_VNET_CIDR" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$IPAM_POOL_ID" ]; then
+            echo "AVNM_IPAM_POOL_RESOURCE_ID is required for non-パターン④" >&2
+            exit 1
+          fi
+
+          PREFIX_LEN=23
+          NUMBER_OF_IPS=$((2 ** (32 - PREFIX_LEN)))
+          STATIC_CIDR_ID="${IPAM_POOL_ID}/staticCidrs/${STATIC_CIDR_NAME}"
+
+          if az resource show --ids "$STATIC_CIDR_ID" --api-version "$API_VERSION" >/tmp/static-cidr.json 2>/dev/null; then
+            CIDR=$(jq -r '.properties.addressPrefixes[0]' /tmp/static-cidr.json)
+            if [ -z "$CIDR" ] || [ "$CIDR" = "null" ]; then
+              echo "Existing static CIDR found, but addressPrefixes[0] is empty." >&2
+              exit 1
+            fi
+            echo "vnet_cidr=$CIDR" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          az resource create \
+            --id "$STATIC_CIDR_ID" \
+            --api-version "$API_VERSION" \
+            --properties "{\"numberOfIpAddresses\": ${NUMBER_OF_IPS}}" \
+            >/tmp/static-cidr-create.json
+
+          CIDR=$(az resource show --ids "$STATIC_CIDR_ID" --api-version "$API_VERSION" | jq -r '.properties.addressPrefixes[0]')
+
+          if [ -z "$CIDR" ] || [ "$CIDR" = "null" ]; then
+            echo "Failed to allocate CIDR from AVNM IPAM pool." >&2
+            exit 1
+          fi
+
+          echo "Allocated CIDR: $CIDR"
+          echo "vnet_cidr=$CIDR" >> "$GITHUB_OUTPUT"
 
       - name: Generate subscriptions yaml
         shell: bash
@@ -142,6 +213,7 @@ jobs:
           RG_NETWORK_NAME='${{ steps.vars.outputs.rg_network_name }}'
           RG_ALERT_NAME='${{ steps.vars.outputs.rg_alert_name }}'
           VNET_NAME='${{ steps.vars.outputs.vnet_name }}'
+          VNET_CIDR='${{ steps.ipam.outputs.vnet_cidr }}'
 
           if [ "$ENV_CODE" = "dev" ]; then
             USE_HUB_GATEWAY="false"
@@ -196,7 +268,7 @@ jobs:
           virtual_network:
             name: "${VNET_NAME}"
             resource_group_name: "${RG_NETWORK_NAME}"
-            address_space: ["/23"]
+            address_space: ["${VNET_CIDR}"]
             hub_peering_enabled: true
             use_hub_gateway: ${USE_HUB_GATEWAY}
             subnets:
@@ -217,7 +289,7 @@ jobs:
           virtual_network:
             name: "${VNET_NAME}"
             resource_group_name: "${RG_NETWORK_NAME}"
-            address_space: ["/23"]
+            address_space: ["${VNET_CIDR}"]
             hub_peering_enabled: true
             use_hub_gateway: ${USE_HUB_GATEWAY}
             subnets:
@@ -236,7 +308,7 @@ jobs:
           virtual_network:
             name: "${VNET_NAME}"
             resource_group_name: "${RG_NETWORK_NAME}"
-            address_space: ["${{ inputs.custom_vnet_cidr }}"]
+            address_space: ["${VNET_CIDR}"]
             hub_peering_enabled: true
             use_hub_gateway: ${USE_HUB_GATEWAY}
             subnets:
@@ -257,7 +329,7 @@ jobs:
           virtual_network:
             name: "${VNET_NAME}"
             resource_group_name: "${RG_NETWORK_NAME}"
-            address_space: ["/23"]
+            address_space: ["${VNET_CIDR}"]
             hub_peering_enabled: true
             use_hub_gateway: ${USE_HUB_GATEWAY}
             subnets:
@@ -285,6 +357,7 @@ jobs:
             billing_company_raw: "${{ inputs.billing_company }}"
             environment_raw: "${{ inputs.environment }}"
             configuration_pattern: "${{ inputs.configuration_pattern }}"
+            avnm_ipam_pool_resource_id: "${{ env.AVNM_IPAM_POOL_RESOURCE_ID }}"
             service_name: "${{ inputs.service_name }}"
             service_short_name: "${{ inputs.service_short_name }}"
           EOF
@@ -322,6 +395,7 @@ jobs:
             - network RG名: `${{ steps.vars.outputs.rg_network_name }}`
             - alert RG名: `${{ steps.vars.outputs.rg_alert_name }}`
             - VNet名: `${{ steps.vars.outputs.vnet_name }}`
+            - VNet CIDR: `${{ steps.ipam.outputs.vnet_cidr }}`
 
             ## 入力値
             | 項目 | 値 |
@@ -333,13 +407,14 @@ jobs:
             | 環境 | `${{ inputs.environment }}` |
             | 請求先会社 | `${{ inputs.billing_company }}` |
             | 構成パターン | `${{ inputs.configuration_pattern }}` |
+            | AVNM IPAM Pool Resource ID | `${{ env.AVNM_IPAM_POOL_RESOURCE_ID }}` |
             | サブスクリプションオーナー | `${{ inputs.subscription_owner_email }}` |
             | サブスクリプション管理者 | `${{ inputs.subscription_admin_email }}` |
             | 通知先1 | `${{ inputs.notification_email_1 }}` |
             | 通知先2 | `${{ inputs.notification_email_2 }}` |
             | 予算 | `${{ inputs.budget }}` |
             | 予算アラート利用 | `${{ inputs.budget_alert_enabled }}` |
-            | VNet CIDR | `${{ inputs.custom_vnet_cidr }}` |
+            | VNet CIDR | `${{ steps.ipam.outputs.vnet_cidr }}` |
             | PrivateSubnet CIDR | `${{ inputs.custom_private_subnet_cidr }}` |
             | ProtectSubnet CIDR | `${{ inputs.custom_protect_subnet_cidr }}` |
             | ApplicationGatewaySubnet CIDR | `${{ inputs.custom_appgw_subnet_cidr }}` |
