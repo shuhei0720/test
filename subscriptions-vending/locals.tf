@@ -103,6 +103,14 @@ locals {
     if v.has_vnet
   }
 
+  # YAML に定義された subnet 名一覧（for_each 判定用に静的に使う）
+  requested_subnet_names = {
+    for k, v in local.subscriptions_raw : k => [
+      for s in try(v.virtual_network.subnets, []) : s.name
+    ]
+    if try(v.virtual_network, null) != null
+  }
+
   # サブネットを先頭から自動採番して CIDR 化
   computed_subnets = {
     for k, v in local.subscriptions : k => [
@@ -115,7 +123,7 @@ locals {
             tonumber(replace(s.address_prefix, "/", "")) - tonumber(split("/", local.resolved_vnet_address_space[k])[1]),
             ceil(sum(concat([
               0
-              ], [
+            ], [
               for prev in slice(try(local.subscriptions_raw[k].virtual_network.subnets, []), 0, idx) :
               pow(
                 2,
@@ -242,27 +250,29 @@ locals {
   # 各種サブネットが存在する場合だけ対象化
   vending_nsg_private = {
     for k, v in local.subscriptions : k => v
-    if try(local.private_subnet_map[k], null) != null
+    if contains(try(local.requested_subnet_names[k], []), "PrivateSubnet")
   }
 
   vending_nsg_protect = {
     for k, v in local.subscriptions : k => v
-    if try(local.protect_subnet_map[k], null) != null
+    if contains(try(local.requested_subnet_names[k], []), "ProtectSubnet")
   }
 
   vending_rt_agw = {
     for k, v in local.subscriptions : k => v
-    if try(local.agw_subnet_map[k], null) != null && try(local.private_subnet_map[k], null) != null && try(local.spoke_fw_ip_map[k], null) != null
+    if contains(try(local.requested_subnet_names[k], []), "ApplicationGatewaySubnet")
+    && contains(try(local.requested_subnet_names[k], []), "PrivateSubnet")
+    && contains(try(local.requested_subnet_names[k], []), "AzureFirewallSubnet")
   }
 
   vending_rt_private = {
     for k, v in local.subscriptions : k => v
-    if try(local.private_subnet_map[k], null) != null
+    if contains(try(local.requested_subnet_names[k], []), "PrivateSubnet")
   }
 
   vending_rt_protect = {
     for k, v in local.subscriptions : k => v
-    if try(local.protect_subnet_map[k], null) != null
+    if contains(try(local.requested_subnet_names[k], []), "ProtectSubnet")
   }
 
   # ER なし環境では gateway route を作らない
