@@ -170,27 +170,40 @@ jobs:
           PREFIX_LEN=23
           NUMBER_OF_IPS=$((2 ** (32 - PREFIX_LEN)))
           STATIC_CIDR_ID="${IPAM_POOL_ID}/staticCidrs/${STATIC_CIDR_NAME}"
+          STATIC_CIDR_URI="https://management.azure.com${STATIC_CIDR_ID}?api-version=${API_VERSION}"
 
-          if az resource show --ids "$STATIC_CIDR_ID" --api-version "$API_VERSION" >/tmp/static-cidr.json 2>/dev/null; then
+          if az rest --method get --uri "$STATIC_CIDR_URI" >/tmp/static-cidr.json 2>/dev/null; then
             CIDR=$(jq -r '.properties.addressPrefixes[0]' /tmp/static-cidr.json)
             if [ -z "$CIDR" ] || [ "$CIDR" = "null" ]; then
               echo "Existing static CIDR found, but addressPrefixes[0] is empty." >&2
+              cat /tmp/static-cidr.json
               exit 1
             fi
             echo "vnet_cidr=$CIDR" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          az resource create \
-            --id "$STATIC_CIDR_ID" \
-            --api-version "$API_VERSION" \
-            --properties "{\"numberOfIpAddresses\": ${NUMBER_OF_IPS}}" \
+          cat >/tmp/static-cidr-body.json <<EOF
+          {
+            "properties": {
+              "numberOfIpAddresses": "${NUMBER_OF_IPS}"
+            }
+          }
+          EOF
+
+          az rest \
+            --method put \
+            --uri "$STATIC_CIDR_URI" \
+            --headers Content-Type=application/json \
+            --body @/tmp/static-cidr-body.json \
             >/tmp/static-cidr-create.json
 
-          CIDR=$(az resource show --ids "$STATIC_CIDR_ID" --api-version "$API_VERSION" | jq -r '.properties.addressPrefixes[0]')
+          az rest --method get --uri "$STATIC_CIDR_URI" >/tmp/static-cidr-result.json
+          CIDR=$(jq -r '.properties.addressPrefixes[0]' /tmp/static-cidr-result.json)
 
           if [ -z "$CIDR" ] || [ "$CIDR" = "null" ]; then
             echo "Failed to allocate CIDR from AVNM IPAM pool." >&2
+            cat /tmp/static-cidr-result.json
             exit 1
           fi
 
