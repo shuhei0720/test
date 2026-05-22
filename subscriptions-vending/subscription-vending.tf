@@ -575,6 +575,12 @@ resource "azapi_update_resource" "vending_subnets_association" {
     )
   }
 
+  retry = {
+    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
+    interval_seconds     = 10
+    max_interval_seconds = 60
+  }
+
   depends_on = [
     azapi_resource.vending_subnets,
     azapi_resource.vending_nsg_private,
