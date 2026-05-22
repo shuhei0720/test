@@ -186,7 +186,7 @@ jobs:
           cat >/tmp/static-cidr-body.json <<EOF
           {
             "properties": {
-              "numberOfIpAddresses": "${NUMBER_OF_IPS}"
+              "numberOfIPAddressesToAllocate": ${NUMBER_OF_IPS}
             }
           }
           EOF
