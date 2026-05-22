@@ -162,7 +162,7 @@ resource "azapi_resource" "service_health" {
 
   depends_on = [
     azapi_resource.vending_resource_groups,
-    azapi_resource.spoke_action_group
+    azapi_resource.spoke_action_group,
   ]
 }
 
@@ -230,18 +230,20 @@ resource "azapi_resource" "vending_vnet" {
           } : {},
           each.value.use_ipam ? {} : {
             addressPrefixes = each.value.address_space
-          }
+          },
         )
       },
       try(length(each.value.hub.hub_dns_servers), 0) > 0 ? {
         dhcpOptions = {
           dnsServers = each.value.hub.hub_dns_servers
         }
-      } : {}
+      } : {},
     )
   }
 
-  response_export_values = ["properties.addressSpace.addressPrefixes"]
+  response_export_values = [
+    "properties.addressSpace.addressPrefixes",
+  ]
 
   depends_on = [azapi_resource.vending_resource_groups]
 
@@ -302,13 +304,12 @@ resource "azapi_resource" "vending_subnets" {
   }
 
   depends_on = [
-    azapi_update_resource.vending_vnet_dns
+    azapi_update_resource.vending_vnet_dns,
   ]
 
   lifecycle { ignore_changes = all }
 }
 
-# Subnet の実体取得（IPAM allocated prefix 参照用）
 resource "azapi_resource_action" "vending_subnet_get" {
   for_each = local.vending_subnets
 
@@ -361,7 +362,7 @@ resource "azapi_resource" "vending_nsg_private" {
             sourceAddressPrefix      = "*"
             destinationAddressPrefix = "*"
           }
-        }
+        },
       ]
     }
   }
@@ -410,7 +411,7 @@ resource "azapi_resource" "vending_nsg_protect" {
             sourceAddressPrefix      = "*"
             destinationAddressPrefix = "*"
           }
-        }
+        },
       ]
     }
   }
@@ -418,7 +419,7 @@ resource "azapi_resource" "vending_nsg_protect" {
   depends_on = [
     azapi_resource.vending_resource_groups,
     azapi_resource.vending_subnets,
-    azapi_resource_action.vending_subnet_get
+    azapi_resource_action.vending_subnet_get,
   ]
 
   lifecycle { ignore_changes = all }
@@ -449,7 +450,7 @@ resource "azapi_resource" "vending_rt_agw" {
             nextHopType      = "VirtualAppliance"
             nextHopIpAddress = local.spoke_fw_ip_map[each.key]
           }
-        }
+        },
       ]
     }
   }
@@ -457,7 +458,7 @@ resource "azapi_resource" "vending_rt_agw" {
   depends_on = [
     azapi_resource.vending_resource_groups,
     azapi_resource.vending_subnets,
-    azapi_resource_action.vending_subnet_get
+    azapi_resource_action.vending_subnet_get,
   ]
 
   lifecycle { ignore_changes = [body] }
@@ -486,7 +487,7 @@ resource "azapi_resource" "vending_rt_private" {
               nextHopType      = "VirtualAppliance"
               nextHopIpAddress = each.value.hub.hub_firewall_private_ip
             }
-          }
+          },
         ],
         try(local.agw_subnet_map[each.key], null) != null && try(local.spoke_fw_ip_map[each.key], null) != null ? [
           {
@@ -496,8 +497,8 @@ resource "azapi_resource" "vending_rt_private" {
               nextHopType      = "VirtualAppliance"
               nextHopIpAddress = local.spoke_fw_ip_map[each.key]
             }
-          }
-        ] : []
+          },
+        ] : [],
       )
     }
   }
@@ -505,7 +506,7 @@ resource "azapi_resource" "vending_rt_private" {
   depends_on = [
     azapi_resource.vending_resource_groups,
     azapi_resource.vending_subnets,
-    azapi_resource_action.vending_subnet_get
+    azapi_resource_action.vending_subnet_get,
   ]
 
   lifecycle { ignore_changes = [body] }
@@ -531,7 +532,7 @@ resource "azapi_resource" "vending_rt_protect" {
             nextHopType      = "VirtualAppliance"
             nextHopIpAddress = each.value.hub.hub_firewall_private_ip
           }
-        }
+        },
       ]
     }
   }
@@ -572,7 +573,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
         routeTable = {
           id = azapi_resource.vending_rt_protect[each.value.sub_key].id
         }
-      } : {}
+      } : {},
     )
   }
 
@@ -582,7 +583,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
     azapi_resource.vending_nsg_protect,
     azapi_resource.vending_rt_agw,
     azapi_resource.vending_rt_private,
-    azapi_resource.vending_rt_protect
+    azapi_resource.vending_rt_protect,
   ]
 }
 
