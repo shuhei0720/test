@@ -97,7 +97,7 @@ locals {
   resolved_vnet_address_space = {
     for k, v in local.subscriptions : k => (
       v.use_ipam
-      ? jsondecode(azapi_resource.vending_vnet[k].output).properties.addressSpace.addressPrefixes[0]
+      ? azapi_resource.vending_vnet[k].output.properties.addressSpace.addressPrefixes[0]
       : v.address_space[0]
     )
     if v.has_vnet
