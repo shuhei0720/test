@@ -126,7 +126,7 @@ locals {
 
   # 作成後の subnet 実CIDR
   resolved_subnet_prefixes = {
-    for k, v in local.vending_subnets : k => azapi_resource.vending_subnets[k].output.properties.addressPrefix
+    for k, v in local.vending_subnets : k => azapi_resource.vending_subnets[k].output.addressPrefix
   }
 
   # 特定サブネットを名前で引けるようにする
