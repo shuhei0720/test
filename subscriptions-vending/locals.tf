@@ -101,16 +101,8 @@ locals {
     if v.has_vnet
   }
 
-  # YAML に定義された subnet 名一覧
-  requested_subnet_names = {
-    for k, v in local.subscriptions_raw : k => [
-      for s in try(v.virtual_network.subnets, []) : s.name
-    ]
-    if try(v.virtual_network, null) != null
-  }
-
-  # Subnet 用の for_each map
-  vending_subnets = merge([
+  # Subnet 定義の canonical map
+  subnet_catalog = merge([
     for k, v in local.subscriptions : {
       for s in try(local.subscriptions_raw[k].virtual_network.subnets, []) :
       "${k}/${s.name}" => {
@@ -124,77 +116,62 @@ locals {
     } if v.has_vnet
   ]...)
 
+  # 既存 resource 名との互換
+  vending_subnets = local.subnet_catalog
+
   # 順序制御用
   vending_subnets_agw = {
-    for k, v in local.vending_subnets : k => v
+    for k, v in local.subnet_catalog : k => v
     if v.name == "ApplicationGatewaySubnet"
   }
 
   vending_subnets_fw = {
-    for k, v in local.vending_subnets : k => v
+    for k, v in local.subnet_catalog : k => v
     if v.name == "AzureFirewallSubnet"
   }
 
   vending_subnets_private = {
-    for k, v in local.vending_subnets : k => v
+    for k, v in local.subnet_catalog : k => v
     if v.name == "PrivateSubnet"
   }
 
   vending_subnets_protect = {
-    for k, v in local.vending_subnets : k => v
+    for k, v in local.subnet_catalog : k => v
     if v.name == "ProtectSubnet"
   }
 
   # 作成後の subnet 実CIDR
-  resolved_subnet_prefixes = {
-    for k, v in local.vending_subnets :
-    k => data.azapi_resource.vending_subnet_read[k].output.properties.ipamPoolPrefixAllocations[0].allocatedAddressPrefixes[0]
+  resolved_subnet_map = {
+    for k, v in local.subnet_catalog : k => {
+      sub_key                  = v.sub_key
+      name                     = v.name
+      effective_address_prefix = data.azapi_resource.vending_subnet_read[k].output.properties.ipamPoolPrefixAllocations[0].allocatedAddressPrefixes[0]
+    }
   }
 
   firewall_subnet_map = {
-    for k, v in local.subscriptions : k => (
-      contains(try(local.requested_subnet_names[k], []), "AzureFirewallSubnet") ? {
-        name                     = "AzureFirewallSubnet"
-        effective_address_prefix = local.resolved_subnet_prefixes["${k}/AzureFirewallSubnet"]
-      } : null
-    )
-    if v.has_vnet
+    for k, v in local.subscriptions : k => local.resolved_subnet_map["${k}/AzureFirewallSubnet"]
+    if contains(keys(local.resolved_subnet_map), "${k}/AzureFirewallSubnet")
   }
 
   agw_subnet_map = {
-    for k, v in local.subscriptions : k => (
-      contains(try(local.requested_subnet_names[k], []), "ApplicationGatewaySubnet") ? {
-        name                     = "ApplicationGatewaySubnet"
-        effective_address_prefix = local.resolved_subnet_prefixes["${k}/ApplicationGatewaySubnet"]
-      } : null
-    )
-    if v.has_vnet
+    for k, v in local.subscriptions : k => local.resolved_subnet_map["${k}/ApplicationGatewaySubnet"]
+    if contains(keys(local.resolved_subnet_map), "${k}/ApplicationGatewaySubnet")
   }
 
   private_subnet_map = {
-    for k, v in local.subscriptions : k => (
-      contains(try(local.requested_subnet_names[k], []), "PrivateSubnet") ? {
-        name                     = "PrivateSubnet"
-        effective_address_prefix = local.resolved_subnet_prefixes["${k}/PrivateSubnet"]
-      } : null
-    )
-    if v.has_vnet
+    for k, v in local.subscriptions : k => local.resolved_subnet_map["${k}/PrivateSubnet"]
+    if contains(keys(local.resolved_subnet_map), "${k}/PrivateSubnet")
   }
 
   protect_subnet_map = {
-    for k, v in local.subscriptions : k => (
-      contains(try(local.requested_subnet_names[k], []), "ProtectSubnet") ? {
-        name                     = "ProtectSubnet"
-        effective_address_prefix = local.resolved_subnet_prefixes["${k}/ProtectSubnet"]
-      } : null
-    )
-    if v.has_vnet
+    for k, v in local.subscriptions : k => local.resolved_subnet_map["${k}/ProtectSubnet"]
+    if contains(keys(local.resolved_subnet_map), "${k}/ProtectSubnet")
   }
 
+  # AzureFirewallSubnet の 4番目のIPを Spoke FW IP として使う
   spoke_fw_ip_map = {
-    for k, v in local.firewall_subnet_map : k => (
-      v != null ? cidrhost(v.effective_address_prefix, 4) : null
-    )
+    for k, v in local.firewall_subnet_map : k => cidrhost(v.effective_address_prefix, 4)
   }
 
   # RG 用の for_each map
@@ -271,29 +248,29 @@ locals {
   # 各種サブネットが存在する場合だけ対象化
   vending_nsg_private = {
     for k, v in local.subscriptions : k => v
-    if contains(try(local.requested_subnet_names[k], []), "PrivateSubnet")
+    if contains(keys(local.subnet_catalog), "${k}/PrivateSubnet")
   }
 
   vending_nsg_protect = {
     for k, v in local.subscriptions : k => v
-    if contains(try(local.requested_subnet_names[k], []), "ProtectSubnet")
+    if contains(keys(local.subnet_catalog), "${k}/ProtectSubnet")
   }
 
   vending_rt_agw = {
     for k, v in local.subscriptions : k => v
-    if contains(try(local.requested_subnet_names[k], []), "ApplicationGatewaySubnet")
-    && contains(try(local.requested_subnet_names[k], []), "PrivateSubnet")
-    && contains(try(local.requested_subnet_names[k], []), "AzureFirewallSubnet")
+    if contains(keys(local.subnet_catalog), "${k}/ApplicationGatewaySubnet")
+    && contains(keys(local.subnet_catalog), "${k}/PrivateSubnet")
+    && contains(keys(local.subnet_catalog), "${k}/AzureFirewallSubnet")
   }
 
   vending_rt_private = {
     for k, v in local.subscriptions : k => v
-    if contains(try(local.requested_subnet_names[k], []), "PrivateSubnet")
+    if contains(keys(local.subnet_catalog), "${k}/PrivateSubnet")
   }
 
   vending_rt_protect = {
     for k, v in local.subscriptions : k => v
-    if contains(try(local.requested_subnet_names[k], []), "ProtectSubnet")
+    if contains(keys(local.subnet_catalog), "${k}/ProtectSubnet")
   }
 
   # ER なし環境では gateway route を作らない
