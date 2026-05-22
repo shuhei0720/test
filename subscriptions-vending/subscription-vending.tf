@@ -241,7 +241,7 @@ resource "azapi_resource" "vending_vnet" {
     )
   }
 
-  response_export_values = ["properties.addressSpace.addressPrefixes"]
+  response_export_values = ["*"]
 
   depends_on = [azapi_resource.vending_resource_groups]
 
@@ -295,7 +295,7 @@ resource "azapi_resource" "vending_subnets" {
     }
   }
 
-  response_export_values = ["properties.addressPrefix"]
+  response_export_values = ["*"]
 
   retry = {
     error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
@@ -370,6 +370,8 @@ resource "azapi_resource" "vending_nsg_protect" {
   location  = each.value.location
   tags      = each.value.tags
 
+  schema_validation_enabled = false
+
   body = {
     properties = {
       securityRules = [
@@ -424,6 +426,8 @@ resource "azapi_resource" "vending_rt_agw" {
   location  = each.value.location
   tags      = each.value.tags
 
+  schema_validation_enabled = false
+
   body = {
     properties = {
       routes = [
@@ -455,6 +459,8 @@ resource "azapi_resource" "vending_rt_private" {
   parent_id = "/subscriptions/${local.resolved_subscription_ids[each.key]}/resourceGroups/${each.value.vnet_rg_name}"
   location  = each.value.location
   tags      = each.value.tags
+
+  schema_validation_enabled = false
 
   body = {
     properties = {
@@ -528,10 +534,17 @@ resource "azapi_update_resource" "vending_subnets_association" {
   type        = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
   resource_id = azapi_resource.vending_subnets[each.key].id
 
+  schema_validation_enabled = false
+
   body = {
     properties = merge(
       {
-        addressPrefix         = azapi_resource.vending_subnets[each.key].output
+        addressPrefixes = [
+          coalesce(
+            try(jsondecode(jsonencode(azapi_resource.vending_subnets[each.key].output)).properties.addressPrefix, null),
+            try(jsondecode(jsonencode(azapi_resource.vending_subnets[each.key].output)).properties.addressPrefixes[0], null)
+          )
+        ]
         defaultOutboundAccess = false
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
