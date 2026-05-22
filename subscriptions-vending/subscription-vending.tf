@@ -212,6 +212,8 @@ resource "azapi_resource" "vending_vnet" {
   location  = each.value.location
   tags      = each.value.tags
 
+  schema_validation_enabled = false
+
   body = {
     properties = merge(
       {
