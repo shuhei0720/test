@@ -44,167 +44,166 @@ locals {
       alert_contacts   = try(v.alert_contacts, [])
       rbac_assignments = [for x in try(v.rbac_assignments, []) : x if trimspace(x) != ""]
 
-      # VNet払い出しの時に拡張
-      # vnet_name       = try(v.virtual_network.name, null)
-      # vnet_rg_name    = try(v.virtual_network.resource_group_name, null)
-      # address_space   = try(v.virtual_network.address_space, [])
-      # has_vnet        = try(v.virtual_network, null) != null
-      # has_peering     = try(v.virtual_network.hub_peering_enabled, false)
-      # use_hub_gateway = try(v.virtual_network.use_hub_gateway, false)
+      vnet_name       = try(v.virtual_network.name, null)
+      vnet_rg_name    = try(v.virtual_network.resource_group_name, null)
+      address_space   = try(v.virtual_network.address_space, [])
+      has_vnet        = try(v.virtual_network, null) != null
+      has_peering     = try(v.virtual_network.hub_peering_enabled, false)
+      use_hub_gateway = try(v.virtual_network.use_hub_gateway, false)
 
-      # # 命名規則で作る名前
-      # rt_agw_name      = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-agw-01"
-      # rt_private_name  = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-private-01"
-      # rt_protect_name  = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-protect-01"
-      # nsg_private_name = "nsg-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-private-01"
-      # nsg_protect_name = "nsg-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-protect-01"
+      # 命名規則で作る名前
+      rt_agw_name      = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-agw-01"
+      rt_private_name  = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-private-01"
+      rt_protect_name  = "rt-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-protect-01"
+      nsg_private_name = "nsg-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-private-01"
+      nsg_protect_name = "nsg-${try(v.subscription_request.service_short_name, k)}-${v.env_short_name}-protect-01"
 
-      # # サブネットを先頭から自動採番して CIDR 化
-      # subnets = [
-      #   for idx, s in try(v.virtual_network.subnets, []) : {
-      #     name = s.name
-      #     effective_address_prefix = try(
-      #       s.address_range,
-      #       cidrsubnet(
-      #         v.virtual_network.address_space[0],
-      #         tonumber(replace(s.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-      #         ceil(sum(concat([
-      #           0
-      #           ], [
-      #           for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-      #           pow(
-      #             2,
-      #             tonumber(replace(s.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-      #           )
-      #         ])))
-      #       )
-      #     )
-      #   }
-      # ]
+      # サブネットを先頭から自動採番して CIDR 化
+      subnets = [
+        for idx, s in try(v.virtual_network.subnets, []) : {
+          name = s.name
+          effective_address_prefix = try(
+            s.address_range,
+            cidrsubnet(
+              v.virtual_network.address_space[0],
+              tonumber(replace(s.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+              ceil(sum(concat([
+                0
+                ], [
+                for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                pow(
+                  2,
+                  tonumber(replace(s.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                )
+              ])))
+            )
+          )
+        }
+      ]
 
-      # # 特定サブネットを名前で引けるようにする
-      # firewall_subnet = try(one([
-      #   for s in [
-      #     for idx, sn in try(v.virtual_network.subnets, []) : {
-      #       name = sn.name
-      #       effective_address_prefix = try(
-      #         sn.address_range,
-      #         cidrsubnet(
-      #           v.virtual_network.address_space[0],
-      #           tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-      #           ceil(sum(concat([
-      #             0
-      #             ], [
-      #             for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-      #             pow(
-      #               2,
-      #               tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-      #             )
-      #           ])))
-      #         )
-      #       )
-      #     }
-      #   ] : s if s.name == "AzureFirewallSubnet"
-      # ]), null)
+      # 特定サブネットを名前で引けるようにする
+      firewall_subnet = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : s if s.name == "AzureFirewallSubnet"
+      ]), null)
 
-      # agw_subnet = try(one([
-      #   for s in [
-      #     for idx, sn in try(v.virtual_network.subnets, []) : {
-      #       name = sn.name
-      #       effective_address_prefix = try(
-      #         sn.address_range,
-      #         cidrsubnet(
-      #           v.virtual_network.address_space[0],
-      #           tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-      #           ceil(sum(concat([
-      #             0
-      #             ], [
-      #             for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-      #             pow(
-      #               2,
-      #               tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-      #             )
-      #           ])))
-      #         )
-      #       )
-      #     }
-      #   ] : s if s.name == "ApplicationGatewaySubnet"
-      # ]), null)
+      agw_subnet = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : s if s.name == "ApplicationGatewaySubnet"
+      ]), null)
 
-      # private_subnet = try(one([
-      #   for s in [
-      #     for idx, sn in try(v.virtual_network.subnets, []) : {
-      #       name = sn.name
-      #       effective_address_prefix = try(
-      #         sn.address_range,
-      #         cidrsubnet(
-      #           v.virtual_network.address_space[0],
-      #           tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-      #           ceil(sum(concat([
-      #             0
-      #             ], [
-      #             for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-      #             pow(
-      #               2,
-      #               tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-      #             )
-      #           ])))
-      #         )
-      #       )
-      #     }
-      #   ] : s if s.name == "PrivateSubnet"
-      # ]), null)
+      private_subnet = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : s if s.name == "PrivateSubnet"
+      ]), null)
 
-      # protect_subnet = try(one([
-      #   for s in [
-      #     for idx, sn in try(v.virtual_network.subnets, []) : {
-      #       name = sn.name
-      #       effective_address_prefix = try(
-      #         sn.address_range,
-      #         cidrsubnet(
-      #           v.virtual_network.address_space[0],
-      #           tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-      #           ceil(sum(concat([
-      #             0
-      #             ], [
-      #             for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-      #             pow(
-      #               2,
-      #               tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-      #             )
-      #           ])))
-      #         )
-      #       )
-      #     }
-      #   ] : s if s.name == "ProtectSubnet"
-      # ]), null)
+      protect_subnet = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : s if s.name == "ProtectSubnet"
+      ]), null)
 
-      # # AzureFirewallSubnet の 4番目のIPを Spoke FW IP として使う
-      # spoke_fw_ip = try(one([
-      #   for s in [
-      #     for idx, sn in try(v.virtual_network.subnets, []) : {
-      #       name = sn.name
-      #       effective_address_prefix = try(
-      #         sn.address_range,
-      #         cidrsubnet(
-      #           v.virtual_network.address_space[0],
-      #           tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-      #           ceil(sum(concat([
-      #             0
-      #             ], [
-      #             for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-      #             pow(
-      #               2,
-      #               tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-      #             )
-      #           ])))
-      #         )
-      #       )
-      #     }
-      #   ] : cidrhost(s.effective_address_prefix, 4) if s.name == "AzureFirewallSubnet"
-      # ]), null)
+      # AzureFirewallSubnet の 4番目のIPを Spoke FW IP として使う
+      spoke_fw_ip = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : cidrhost(s.effective_address_prefix, 4) if s.name == "AzureFirewallSubnet"
+      ]), null)
 
-      # hub              = var.hub_environments[v.env_short_name]
+      hub              = var.hub_environments[v.env_short_name]
     }
   }
 
@@ -226,123 +225,122 @@ locals {
     if length(v.rbac_assignments) > 0
   }
 
-  # 以下、今後実装
-  # # RG 用の for_each map
-  # vending_resource_groups = merge([
-  #   for k, v in local.subscriptions : {
-  #     "${k}/network" = {
-  #       sub_key  = k
-  #       sub_id   = local.resolved_subscription_ids[k]
-  #       name     = v.network_rg_name
-  #       location = v.network_rg_location
-  #       tags     = v.tags
-  #     }
-  #     "${k}/alert" = {
-  #       sub_key  = k
-  #       sub_id   = local.resolved_subscription_ids[k]
-  #       name     = v.alert_rg_name
-  #       location = v.alert_rg_location
-  #       tags     = v.tags
-  #     }
-  #   }
-  # ]...)
+  # RG 用の for_each map
+  vending_resource_groups = merge([
+    for k, v in local.subscriptions : {
+      "${k}/network" = {
+        sub_key  = k
+        sub_id   = local.resolved_subscription_ids[k]
+        name     = v.network_rg_name
+        location = v.network_rg_location
+        tags     = v.tags
+      }
+      "${k}/alert" = {
+        sub_key  = k
+        sub_id   = local.resolved_subscription_ids[k]
+        name     = v.alert_rg_name
+        location = v.alert_rg_location
+        tags     = v.tags
+      }
+    }
+  ]...)
 
-  # # 通知系用
-  # vending_with_alerts = {
-  #   for k, v in local.subscriptions : k => {
-  #     sub_id            = local.resolved_subscription_ids[k]
-  #     subscription_name = v.subscription_name
-  #     location          = v.location
-  #     alert_contacts    = v.alert_contacts
-  #     short_name        = substr(replace(v.service_short_name, "-", ""), 0, 12)
-  #     tags              = v.tags
-  #     rg_name           = v.alert_rg_name
-  #     env_short_name    = v.env_short_name
-  #   }
-  #   if length(v.alert_contacts) > 0
-  # }
+  # 通知系用
+  vending_with_alerts = {
+    for k, v in local.subscriptions : k => {
+      sub_id            = local.resolved_subscription_ids[k]
+      subscription_name = v.subscription_name
+      location          = v.location
+      alert_contacts    = v.alert_contacts
+      short_name        = substr(replace(v.service_short_name, "-", ""), 0, 12)
+      tags              = v.tags
+      rg_name           = v.alert_rg_name
+      env_short_name    = v.env_short_name
+    }
+    if length(v.alert_contacts) > 0
+  }
 
-  # # 予算アラート用
-  # vending_with_budget = {
-  #   for k, v in local.subscriptions : k => {
-  #     sub_id            = local.resolved_subscription_ids[k]
-  #     subscription_name = v.subscription_name
-  #     amount            = v.budget
-  #     alert_contacts    = v.alert_contacts
-  #     env_short_name    = v.env_short_name
-  #   }
-  #   if v.budget != null && length(v.alert_contacts) > 0
-  # }
+  # 予算アラート用
+  vending_with_budget = {
+    for k, v in local.subscriptions : k => {
+      sub_id            = local.resolved_subscription_ids[k]
+      subscription_name = v.subscription_name
+      amount            = v.budget
+      alert_contacts    = v.alert_contacts
+      env_short_name    = v.env_short_name
+    }
+    if v.budget != null && length(v.alert_contacts) > 0
+  }
 
-  # # Subnet 用の for_each map
-  # vending_subnets = merge([
-  #   for k, v in local.subscriptions : {
-  #     for idx, subnet in v.subnets :
-  #     "${k}/${subnet.name}" => {
-  #       sub_key                  = k
-  #       sub_id                   = local.resolved_subscription_ids[k]
-  #       vnet_rg                  = v.vnet_rg_name
-  #       name                     = subnet.name
-  #       effective_address_prefix = subnet.effective_address_prefix
-  #       subnet_index             = idx
-  #     }
-  #   } if v.has_vnet
-  # ]...)
+  # Subnet 用の for_each map
+  vending_subnets = merge([
+    for k, v in local.subscriptions : {
+      for idx, subnet in v.subnets :
+      "${k}/${subnet.name}" => {
+        sub_key                  = k
+        sub_id                   = local.resolved_subscription_ids[k]
+        vnet_rg                  = v.vnet_rg_name
+        name                     = subnet.name
+        effective_address_prefix = subnet.effective_address_prefix
+        subnet_index             = idx
+      }
+    } if v.has_vnet
+  ]...)
 
-  # # VNetありのもの
-  # vending_with_vnet = {
-  #   for k, v in local.subscriptions : k => v
-  #   if v.has_vnet
-  # }
+  # VNetありのもの
+  vending_with_vnet = {
+    for k, v in local.subscriptions : k => v
+    if v.has_vnet
+  }
 
-  # # Peeringありのもの
-  # vending_with_peering = {
-  #   for k, v in local.subscriptions : k => v
-  #   if v.has_vnet && v.has_peering
-  # }
+  # Peeringありのもの
+  vending_with_peering = {
+    for k, v in local.subscriptions : k => v
+    if v.has_vnet && v.has_peering
+  }
 
-  # # Hub Gateway 側に追加する Spoke ルート
-  # vending_spoke_routes = flatten([
-  #   for k, v in local.subscriptions : [
-  #     for i, cidr in v.address_space : {
-  #       key            = "${k}-${i}"
-  #       env_short_name = v.env_short_name
-  #       name           = "to-${v.vnet_name}-${i}"
-  #       address_prefix = cidr
-  #     }
-  #   ] if v.has_vnet && v.has_peering
-  # ])
+  # Hub Gateway 側に追加する Spoke ルート
+  vending_spoke_routes = flatten([
+    for k, v in local.subscriptions : [
+      for i, cidr in v.address_space : {
+        key            = "${k}-${i}"
+        env_short_name = v.env_short_name
+        name           = "to-${v.vnet_name}-${i}"
+        address_prefix = cidr
+      }
+    ] if v.has_vnet && v.has_peering
+  ])
 
-  # # 各種サブネットが存在する場合だけ対象化
-  # vending_nsg_private = {
-  #   for k, v in local.subscriptions : k => v
-  #   if v.private_subnet != null
-  # }
+  # 各種サブネットが存在する場合だけ対象化
+  vending_nsg_private = {
+    for k, v in local.subscriptions : k => v
+    if v.private_subnet != null
+  }
 
-  # vending_nsg_protect = {
-  #   for k, v in local.subscriptions : k => v
-  #   if v.protect_subnet != null
-  # }
+  vending_nsg_protect = {
+    for k, v in local.subscriptions : k => v
+    if v.protect_subnet != null
+  }
 
-  # vending_rt_agw = {
-  #   for k, v in local.subscriptions : k => v
-  #   if v.agw_subnet != null && v.private_subnet != null && v.spoke_fw_ip != null
-  # }
+  vending_rt_agw = {
+    for k, v in local.subscriptions : k => v
+    if v.agw_subnet != null && v.private_subnet != null && v.spoke_fw_ip != null
+  }
 
-  # vending_rt_private = {
-  #   for k, v in local.subscriptions : k => v
-  #   if v.private_subnet != null
-  # }
+  vending_rt_private = {
+    for k, v in local.subscriptions : k => v
+    if v.private_subnet != null
+  }
 
-  # vending_rt_protect = {
-  #   for k, v in local.subscriptions : k => v
-  #   if v.protect_subnet != null
-  # }
+  vending_rt_protect = {
+    for k, v in local.subscriptions : k => v
+    if v.protect_subnet != null
+  }
 
-  # # ER なし環境では gateway route を作らない
-  # vending_spoke_routes_with_gateway = {
-  #   for r in local.vending_spoke_routes : r.key => r
-  #   if try(var.hub_environments[r.env_short_name].hub_gateway_route_table_resource_group_name, null) != null
-  #   && try(var.hub_environments[r.env_short_name].hub_gateway_route_table_name, null) != null
-  # }
+  # ER なし環境では gateway route を作らない
+  vending_spoke_routes_with_gateway = {
+    for r in local.vending_spoke_routes : r.key => r
+    if try(var.hub_environments[r.env_short_name].hub_gateway_route_table_resource_group_name, null) != null
+    && try(var.hub_environments[r.env_short_name].hub_gateway_route_table_name, null) != null
+  }
 }
