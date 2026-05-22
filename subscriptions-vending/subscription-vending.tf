@@ -670,9 +670,6 @@ resource "azapi_update_resource" "vending_subnets_association" {
             }
           }
         ]
-        delegations                       = try(data.azapi_resource.vending_subnet_read[each.key].output.properties.delegations, [])
-        privateEndpointNetworkPolicies    = try(data.azapi_resource.vending_subnet_read[each.key].output.properties.privateEndpointNetworkPolicies, "Disabled")
-        privateLinkServiceNetworkPolicies = try(data.azapi_resource.vending_subnet_read[each.key].output.properties.privateLinkServiceNetworkPolicies, "Enabled")
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
         routeTable = {
