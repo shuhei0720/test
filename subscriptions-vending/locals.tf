@@ -127,7 +127,7 @@ locals {
   # 作成後の subnet 実CIDR（GET結果から取得）
   resolved_subnet_prefixes = {
     for k, v in local.vending_subnets :
-    k => jsondecode(azapi_resource_action.vending_subnet_get[k].output).properties.ipamPoolPrefixAllocations[0].allocatedAddressPrefixes[0]
+    k => azapi_resource_action.vending_subnet_get[k].output.properties.ipamPoolPrefixAllocations[0].allocatedAddressPrefixes[0]
   }
 
   # 特定サブネットを名前で引けるようにする
