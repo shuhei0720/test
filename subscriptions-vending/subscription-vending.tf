@@ -241,6 +241,8 @@ resource "azapi_resource" "vending_vnet" {
     )
   }
 
+  response_export_values = ["properties.addressSpace.addressPrefixes"]
+
   depends_on = [azapi_resource.vending_resource_groups]
 
   lifecycle { ignore_changes = all }
@@ -293,11 +295,29 @@ resource "azapi_resource" "vending_subnets" {
     }
   }
 
+  retry = {
+    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
+    interval_seconds     = 10
+    max_interval_seconds = 60
+  }
+
   depends_on = [
     azapi_update_resource.vending_vnet_dns
   ]
 
   lifecycle { ignore_changes = all }
+}
+
+# Subnet の実体取得（IPAM allocated prefix 参照用）
+resource "azapi_resource_action" "vending_subnet_get" {
+  for_each = local.vending_subnets
+
+  type        = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  resource_id = azapi_resource.vending_subnets[each.key].id
+  action      = ""
+  method      = "GET"
+
+  depends_on = [azapi_resource.vending_subnets]
 }
 
 # =============================================================================
@@ -397,7 +417,8 @@ resource "azapi_resource" "vending_nsg_protect" {
 
   depends_on = [
     azapi_resource.vending_resource_groups,
-    azapi_resource.vending_subnets
+    azapi_resource.vending_subnets,
+    azapi_resource_action.vending_subnet_get
   ]
 
   lifecycle { ignore_changes = all }
@@ -435,7 +456,8 @@ resource "azapi_resource" "vending_rt_agw" {
 
   depends_on = [
     azapi_resource.vending_resource_groups,
-    azapi_resource.vending_subnets
+    azapi_resource.vending_subnets,
+    azapi_resource_action.vending_subnet_get
   ]
 
   lifecycle { ignore_changes = [body] }
@@ -482,7 +504,8 @@ resource "azapi_resource" "vending_rt_private" {
 
   depends_on = [
     azapi_resource.vending_resource_groups,
-    azapi_resource.vending_subnets
+    azapi_resource.vending_subnets,
+    azapi_resource_action.vending_subnet_get
   ]
 
   lifecycle { ignore_changes = [body] }

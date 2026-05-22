@@ -95,7 +95,7 @@ locals {
   resolved_vnet_address_space = {
     for k, v in local.subscriptions : k => (
       v.use_ipam
-      ? azapi_resource.vending_vnet[k].output.properties.addressSpace.ipamPoolPrefixAllocations[0].allocatedAddressPrefixes[0]
+      ? azapi_resource.vending_vnet[k].output.properties.addressSpace.addressPrefixes[0]
       : v.address_space[0]
     )
     if v.has_vnet
@@ -124,10 +124,10 @@ locals {
     } if v.has_vnet
   ]...)
 
-  # 作成後の subnet 実CIDR
+  # 作成後の subnet 実CIDR（GET結果から取得）
   resolved_subnet_prefixes = {
     for k, v in local.vending_subnets :
-    k => azapi_resource.vending_subnets[k].output.properties.ipamPoolPrefixAllocations[0].allocatedAddressPrefixes[0]
+    k => jsondecode(azapi_resource_action.vending_subnet_get[k].output).properties.ipamPoolPrefixAllocations[0].allocatedAddressPrefixes[0]
   }
 
   # 特定サブネットを名前で引けるようにする
