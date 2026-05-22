@@ -34,7 +34,7 @@ hub_environments = {
     hub_dns_servers                             = ["10.204.0.100"]
     hub_gateway_route_table_resource_group_name = "rg-hub-prod-network-01"
     hub_gateway_route_table_name                = "rt-hub-prod-vpngw-01"
-    spoke_ipam_pool_id = "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/afasdfasdf/ipamPools/safdasdf"
+    spoke_ipam_pool_id                          = "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/afasdfasdf/ipamPools/safdasdf"
   }
 
   stg = {
@@ -46,7 +46,7 @@ hub_environments = {
     hub_dns_servers                             = ["10.44.0.100"]
     hub_gateway_route_table_resource_group_name = "rg-hub-stg-network-01"
     hub_gateway_route_table_name                = "rt-hub-stg-gw-01"
-    spoke_ipam_pool_id = "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/afasdfasdf/ipamPools/safdasdf"
+    spoke_ipam_pool_id                          = "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/afasdfasdf/ipamPools/safdasdf"
   }
 
   dev = {
@@ -56,6 +56,6 @@ hub_environments = {
     hub_virtual_network_name      = "vnet-hub-sand-network-01"
     hub_virtual_network_parent_id = "/subscriptions/5c717140-1b81-46bc-a254-167e978997d6/resourceGroups/rg-hub-sand-network-01"
     hub_firewall_private_ip       = "10.186.0.4"
-    spoke_ipam_pool_id = "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/afasdfasdf/ipamPools/safdasdf"
+    spoke_ipam_pool_id            = "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/afasdfasdf/ipamPools/safdasdf"
   }
 }
