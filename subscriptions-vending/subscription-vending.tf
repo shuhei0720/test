@@ -531,8 +531,8 @@ resource "azapi_update_resource" "vending_subnets_association" {
   body = {
     properties = merge(
       {
-        addressPrefixes        = [azapi_resource.vending_subnets[each.key].output.properties.addressPrefixes[0]]
-        defaultOutboundAccess  = false
+        addressPrefixes       = [azapi_resource.vending_subnets[each.key].output.properties.addressPrefixes[0]]
+        defaultOutboundAccess = false
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
         routeTable = {
