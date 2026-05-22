@@ -650,7 +650,7 @@ resource "azapi_resource" "vending_rt_protect" {
 resource "azapi_update_resource" "vending_subnets_association" {
   for_each = local.vending_subnets
 
-  type = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  type        = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
   resource_id = coalesce(
     try(azapi_resource.vending_subnets_agw[each.key].id, null),
     try(azapi_resource.vending_subnets_fw[each.key].id, null),
@@ -662,6 +662,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
     properties = merge(
       {
         defaultOutboundAccess = false
+        ipamPoolPrefixAllocations = data.azapi_resource.vending_subnet_read[each.key].output.properties.ipamPoolPrefixAllocations
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
         routeTable = {
@@ -703,84 +704,84 @@ resource "azapi_update_resource" "vending_subnets_association" {
   ]
 }
 
-# =============================================================================
-# Spoke -> Hub Peering
-# =============================================================================
+# # =============================================================================
+# # Spoke -> Hub Peering
+# # =============================================================================
 
-resource "azapi_resource" "vending_spoke_to_hub" {
-  for_each = local.vending_with_peering
+# resource "azapi_resource" "vending_spoke_to_hub" {
+#   for_each = local.vending_with_peering
 
-  type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
-  name      = "peer-${each.value.vnet_name}-to-hub"
-  parent_id = azapi_resource.vending_vnet[each.key].id
+#   type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
+#   name      = "peer-${each.value.vnet_name}-to-hub"
+#   parent_id = azapi_resource.vending_vnet[each.key].id
 
-  body = {
-    properties = {
-      remoteVirtualNetwork = {
-        id = each.value.hub.hub_virtual_network_id
-      }
-      allowForwardedTraffic     = true
-      allowVirtualNetworkAccess = true
-      useRemoteGateways         = each.value.use_hub_gateway
-    }
-  }
+#   body = {
+#     properties = {
+#       remoteVirtualNetwork = {
+#         id = each.value.hub.hub_virtual_network_id
+#       }
+#       allowForwardedTraffic     = true
+#       allowVirtualNetworkAccess = true
+#       useRemoteGateways         = each.value.use_hub_gateway
+#     }
+#   }
 
-  retry = {
-    error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress", "RemoteVnetHasNoGateways"]
-    interval_seconds     = 30
-    max_interval_seconds = 300
-  }
+#   retry = {
+#     error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress", "RemoteVnetHasNoGateways"]
+#     interval_seconds     = 30
+#     max_interval_seconds = 300
+#   }
 
-  depends_on = [azapi_update_resource.vending_subnets_association]
-}
+#   depends_on = [azapi_update_resource.vending_subnets_association]
+# }
 
-# =============================================================================
-# Hub -> Spoke Peering
-# =============================================================================
+# # =============================================================================
+# # Hub -> Spoke Peering
+# # =============================================================================
 
-resource "azapi_resource" "vending_hub_to_spoke" {
-  for_each = local.vending_with_peering
+# resource "azapi_resource" "vending_hub_to_spoke" {
+#   for_each = local.vending_with_peering
 
-  type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
-  name      = "peer-hub-to-${each.value.vnet_name}"
-  parent_id = "${each.value.hub.hub_virtual_network_parent_id}/providers/Microsoft.Network/virtualNetworks/${each.value.hub.hub_virtual_network_name}"
+#   type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
+#   name      = "peer-hub-to-${each.value.vnet_name}"
+#   parent_id = "${each.value.hub.hub_virtual_network_parent_id}/providers/Microsoft.Network/virtualNetworks/${each.value.hub.hub_virtual_network_name}"
 
-  body = {
-    properties = {
-      remoteVirtualNetwork = {
-        id = azapi_resource.vending_vnet[each.key].id
-      }
-      allowForwardedTraffic     = true
-      allowVirtualNetworkAccess = true
-      allowGatewayTransit       = true
-    }
-  }
+#   body = {
+#     properties = {
+#       remoteVirtualNetwork = {
+#         id = azapi_resource.vending_vnet[each.key].id
+#       }
+#       allowForwardedTraffic     = true
+#       allowVirtualNetworkAccess = true
+#       allowGatewayTransit       = true
+#     }
+#   }
 
-  retry = {
-    error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress"]
-    interval_seconds     = 30
-    max_interval_seconds = 300
-  }
+#   retry = {
+#     error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress"]
+#     interval_seconds     = 30
+#     max_interval_seconds = 300
+#   }
 
-  depends_on = [azapi_update_resource.vending_subnets_association]
-}
+#   depends_on = [azapi_update_resource.vending_subnets_association]
+# }
 
-# =============================================================================
-# GatewaySubnet Route Table routes
-# =============================================================================
+# # =============================================================================
+# # GatewaySubnet Route Table routes
+# # =============================================================================
 
-resource "azapi_resource" "gateway_to_vending" {
-  for_each = local.vending_spoke_routes_with_gateway
+# resource "azapi_resource" "gateway_to_vending" {
+#   for_each = local.vending_spoke_routes_with_gateway
 
-  type      = "Microsoft.Network/routeTables/routes@2024-01-01"
-  name      = each.value.name
-  parent_id = "/subscriptions/${var.hub_environments[each.value.env_short_name].hub_subscription_id}/resourceGroups/${var.hub_environments[each.value.env_short_name].hub_gateway_route_table_resource_group_name}/providers/Microsoft.Network/routeTables/${var.hub_environments[each.value.env_short_name].hub_gateway_route_table_name}"
+#   type      = "Microsoft.Network/routeTables/routes@2024-01-01"
+#   name      = each.value.name
+#   parent_id = "/subscriptions/${var.hub_environments[each.value.env_short_name].hub_subscription_id}/resourceGroups/${var.hub_environments[each.value.env_short_name].hub_gateway_route_table_resource_group_name}/providers/Microsoft.Network/routeTables/${var.hub_environments[each.value.env_short_name].hub_gateway_route_table_name}"
 
-  body = {
-    properties = {
-      addressPrefix    = each.value.address_prefix
-      nextHopType      = "VirtualAppliance"
-      nextHopIpAddress = var.hub_environments[each.value.env_short_name].hub_firewall_private_ip
-    }
-  }
-}
+#   body = {
+#     properties = {
+#       addressPrefix    = each.value.address_prefix
+#       nextHopType      = "VirtualAppliance"
+#       nextHopIpAddress = var.hub_environments[each.value.env_short_name].hub_firewall_private_ip
+#     }
+#   }
+# }
