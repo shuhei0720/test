@@ -379,7 +379,6 @@ jobs:
             billing_company_raw: "${{ inputs.billing_company }}"
             environment_raw: "${{ inputs.environment }}"
             configuration_pattern: "${{ inputs.configuration_pattern }}"
-            avnm_ipam_pool_resource_id: "${{ env.AVNM_IPAM_POOL_RESOURCE_ID }}"
             service_name: "${{ inputs.service_name }}"
             service_short_name: "${{ inputs.service_short_name }}"
           EOF
@@ -429,7 +428,6 @@ jobs:
             | 環境 | `${{ inputs.environment }}` |
             | 請求先会社 | `${{ inputs.billing_company }}` |
             | 構成パターン | `${{ inputs.configuration_pattern }}` |
-            | AVNM IPAM Pool Resource ID | `${{ env.AVNM_IPAM_POOL_RESOURCE_ID }}` |
             | サブスクリプションオーナー | `${{ inputs.subscription_owner_email }}` |
             | サブスクリプション管理者 | `${{ inputs.subscription_admin_email }}` |
             | 通知先1 | `${{ inputs.notification_email_1 }}` |
