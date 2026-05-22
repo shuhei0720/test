@@ -153,21 +153,30 @@ jobs:
           STATIC_CIDR_NAME='${{ steps.vars.outputs.static_cidr_name }}'
           API_VERSION='2024-05-01'
 
+          if [ -z "$IPAM_POOL_ID" ]; then
+            echo "AVNM_IPAM_POOL_RESOURCE_ID is required" >&2
+            exit 1
+          fi
+
+          # パターン④:
+          # - 10.0.0.0/22 のような具体CIDRならそのまま使う
+          # - /22 のようなプレフィックス指定なら AVNM から払い出す
           if [[ "$CONFIG_PATTERN" == *"パターン④"* ]]; then
             if [ -z "$CUSTOM_VNET_CIDR" ]; then
               echo "custom_vnet_cidr is required for パターン④" >&2
               exit 1
             fi
-            echo "vnet_cidr=$CUSTOM_VNET_CIDR" >> "$GITHUB_OUTPUT"
-            exit 0
+
+            if [[ "$CUSTOM_VNET_CIDR" =~ ^/[0-9]{1,2}$ ]]; then
+              PREFIX_LEN="${CUSTOM_VNET_CIDR#/}"
+            else
+              echo "vnet_cidr=$CUSTOM_VNET_CIDR" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            PREFIX_LEN=23
           fi
 
-          if [ -z "$IPAM_POOL_ID" ]; then
-            echo "AVNM_IPAM_POOL_RESOURCE_ID is required for non-パターン④" >&2
-            exit 1
-          fi
-
-          PREFIX_LEN=23
           NUMBER_OF_IPS=$((2 ** (32 - PREFIX_LEN)))
           STATIC_CIDR_ID="${IPAM_POOL_ID}/staticCidrs/${STATIC_CIDR_NAME}"
           STATIC_CIDR_URI="https://management.azure.com${STATIC_CIDR_ID}?api-version=${API_VERSION}"
