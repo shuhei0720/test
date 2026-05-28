@@ -44,14 +44,24 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           files=(subscriptions/*.yaml)
+
           if [ ${#files[@]} -eq 0 ]; then
-            echo "subscriptions 配下に YAML が見つかりません" >&2
-            exit 1
+            echo "jira_issue_key=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          JIRA_ISSUE_KEY=$(python -c "import sys,yaml; print(yaml.safe_load(open(sys.argv[1], encoding='utf-8'))['subscription_request']['jira_issue_key'])" "${files[0]}")
+
+          JIRA_ISSUE_KEY=$(python -c "import sys,yaml; data=yaml.safe_load(open(sys.argv[1], encoding='utf-8')) or {}; print(data.get('subscription_request', {}).get('jira_issue_key', ''))" "${files[0]}")
+
           echo "jira_issue_key=${JIRA_ISSUE_KEY}" >> "$GITHUB_OUTPUT"
 
+      - name: Skip summary when JIRA key is empty
+        if: steps.jira.outputs.jira_issue_key == ''
+        run: |
+          echo "### ℹ️ Terraform skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "パラメーターファイル がないため Plan / Apply をスキップしました。" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Restore previous tfstate artifact
+        if: steps.jira.outputs.jira_issue_key != ''
         uses: dawidd6/action-download-artifact@v6
         with:
           github_token: ${{ github.token }}
@@ -64,27 +74,32 @@ jobs:
           search_artifacts: true
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        if: steps.jira.outputs.jira_issue_key != ''
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Setup Terraform
+        if: steps.jira.outputs.jira_issue_key != ''
         uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
         with:
           terraform_version: ~> 1.12
           terraform_wrapper: false
 
       - name: Terraform Init (local state)
+        if: steps.jira.outputs.jira_issue_key != ''
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform init -backend=false
 
       - name: Terraform Validate
+        if: steps.jira.outputs.jira_issue_key != ''
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform validate
 
       - name: Terraform Plan
+        if: steps.jira.outputs.jira_issue_key != ''
         id: plan
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
@@ -92,7 +107,6 @@ jobs:
           terraform plan -no-color -input=false -out=tfplan -detailed-exitcode 2>&1 | tee plan-output.txt
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
-
           if [[ $EXIT_CODE -eq 0 ]]; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             echo "### ✅ Plan: 変更なし" >> "$GITHUB_STEP_SUMMARY"
@@ -103,12 +117,10 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "以下の変更が apply されます。\`Apply\` " >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            # サマリー行（Plan: X to add, Y to change, Z to destroy）
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep -E '^Plan:|^Changes to Outputs' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            # リソース変更一覧
             echo "#### リソース変更一覧" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep -E '^  # .* (will be|must be)' plan-output.txt >> "$GITHUB_STEP_SUMMARY" || true
@@ -130,7 +142,7 @@ jobs:
           fi
 
       - name: Upload Plan Artifact
-        if: steps.plan.outputs.has_changes == 'true'
+        if: steps.jira.outputs.jira_issue_key != '' && steps.plan.outputs.has_changes == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: terraform-plan-${{ steps.jira.outputs.jira_issue_key }}
@@ -145,7 +157,7 @@ jobs:
     name: Apply
     runs-on: ubuntu-latest
     needs: plan
-    if: needs.plan.outputs.has_changes == 'true'
+    if: needs.plan.outputs.jira_issue_key != '' && needs.plan.outputs.has_changes == 'true'
     environment: azure
 
     steps:
@@ -155,7 +167,7 @@ jobs:
           ref: main
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -226,10 +238,8 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-
           : > post-test-output.txt
           TEST_EXIT_CODE=0
-
           for file in "${files[@]}"; do
             python "${{ env.POST_DEPLOY_TEST_SCRIPT }}" "$file" 2>&1 | tee -a post-test-output.txt
             CURRENT_EXIT_CODE=${PIPESTATUS[0]}
@@ -238,7 +248,6 @@ jobs:
             fi
             echo '' | tee -a post-test-output.txt
           done
-
           if [[ $TEST_EXIT_CODE -eq 0 ]]; then
             echo "### ✅ Post-deploy test result" >> "$GITHUB_STEP_SUMMARY"
           else
@@ -247,7 +256,6 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat post-test-output.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-
           exit 0
 
       - name: Prepare move applied YAMLs
@@ -282,14 +290,11 @@ jobs:
           body: |
             ## 概要
             Terraform Apply 成功後、処理済みの subscription YAML を `subscriptions/` から `subscriptions/created/` へ移動しました。
-
             ## 背景
             - このリポジトリではサブスクリプション払い出しを使い捨て運用とする
             - local state のため、再実行対象から外すために YAML を退避する
-
             ## 変更内容
             - `${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/*.yaml` → `${{ env.TERRAFORM_WORKING_DIR }}/subscriptions/created/` に移動
-
             ## 備考
             - この PR は Terraform CD workflow により自動作成されています。
           delete-branch: false
