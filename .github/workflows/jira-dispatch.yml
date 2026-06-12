@@ -84,6 +84,7 @@ jobs:
           SERVICE_NAME='${{ inputs.service_name }}'
           SERVICE_SHORT_NAME='${{ inputs.service_short_name }}'
           ENV_RAW='${{ inputs.environment }}'
+          BUDGET_ALERT_ENABLED_RAW='${{ inputs.budget_alert_enabled }}'
 
           BILLING_COMPANY_NAME=$(echo "$RAW_COMPANY" | sed -E 's/（[^）]+）$//')
           BILLING_COMPANY_CODE=$(echo "$RAW_COMPANY" | sed -E 's/^.*（([^）]+)）$/\1/')
@@ -113,6 +114,15 @@ jobs:
             USE_HUB_GATEWAY="true"
           fi
 
+          case "$BUDGET_ALERT_ENABLED_RAW" in
+            "はい"|"true"|"True"|"TRUE"|"yes"|"Yes"|"YES")
+              BUDGET_ALERT_ENABLED="true"
+              ;;
+            *)
+              BUDGET_ALERT_ENABLED="false"
+              ;;
+          esac
+
           SUBSCRIPTION_NAME="subscription_${ENV_CODE}_${BILLING_COMPANY_CODE}_${SERVICE_NAME}"
           FILE_NAME="${SUBSCRIPTION_NAME}.yaml"
           BRANCH_NAME="feature/${{ inputs.jira_issue_key }}-subscription-request"
@@ -140,6 +150,7 @@ jobs:
           echo "env_code=$ENV_CODE" >> "$GITHUB_OUTPUT"
           echo "management_group_id=$MANAGEMENT_GROUP_ID" >> "$GITHUB_OUTPUT"
           echo "use_hub_gateway=$USE_HUB_GATEWAY" >> "$GITHUB_OUTPUT"
+          echo "budget_alert_enabled=$BUDGET_ALERT_ENABLED" >> "$GITHUB_OUTPUT"
           echo "subscription_name=$SUBSCRIPTION_NAME" >> "$GITHUB_OUTPUT"
           echo "file_name=$FILE_NAME" >> "$GITHUB_OUTPUT"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
@@ -211,7 +222,7 @@ jobs:
                 email_address: "${{ inputs.notification_email_2 }}"
 
           budget:
-            enabled: ${{ inputs.budget_alert_enabled }}
+            enabled: ${{ steps.vars.outputs.budget_alert_enabled }}
             name: "${{ steps.vars.outputs.budget_name }}"
             amount: ${{ inputs.budget }}
             threshold: 80
