@@ -1,5 +1,4 @@
 name: jira-dispatch
-run-name: jira-dispatch-${{ inputs.jira_issue_key }}-${{ inputs.environment }}-${{ inputs.service_name }}
 
 on:
   workflow_dispatch:
@@ -63,6 +62,15 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
+
+env:
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AVNM_IPAM_POOL_RESOURCE_ID_PROD: "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/avnm01/ipamPools/pool01"
+  AVNM_IPAM_POOL_RESOURCE_ID_STG: "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/avnm01/ipamPools/pool01"
+  AVNM_IPAM_POOL_RESOURCE_ID_DEV: "/subscriptions/bec80a1b-7f04-462d-9299-149138ee0e8a/resourceGroups/nwtest/providers/Microsoft.Network/networkManagers/avnm01/ipamPools/pool01"
 
 jobs:
   create-pr:
@@ -73,6 +81,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Derive variables
         id: vars
@@ -92,26 +107,25 @@ jobs:
             "本番環境")
               ENV_CODE="prod"
               MANAGEMENT_GROUP_ID="Producrion"
+              IPAM_POOL_RESOURCE_ID='${{ env.AVNM_IPAM_POOL_RESOURCE_ID_PROD }}'
               ;;
             "検証環境")
               ENV_CODE="stg"
               MANAGEMENT_GROUP_ID="Staging"
+              IPAM_POOL_RESOURCE_ID='${{ env.AVNM_IPAM_POOL_RESOURCE_ID_STG }}'
               ;;
             "開発環境")
               ENV_CODE="dev"
               MANAGEMENT_GROUP_ID="Sandbox"
+              IPAM_POOL_RESOURCE_ID='${{ env.AVNM_IPAM_POOL_RESOURCE_ID_DEV }}'
               ;;
             *)
               ENV_CODE="$ENV_RAW"
               MANAGEMENT_GROUP_ID="$ENV_RAW"
+              echo "Unsupported environment: $ENV_RAW" >&2
+              exit 1
               ;;
           esac
-
-          if [ "$ENV_CODE" = "dev" ]; then
-            USE_HUB_GATEWAY="false"
-          else
-            USE_HUB_GATEWAY="true"
-          fi
 
           SUBSCRIPTION_NAME="subscription_${ENV_CODE}_${BILLING_COMPANY_CODE}_${SERVICE_NAME}"
           FILE_NAME="${SUBSCRIPTION_NAME}.yaml"
@@ -120,43 +134,95 @@ jobs:
           RG_NETWORK_NAME="rg-${SERVICE_SHORT_NAME}-${ENV_CODE}-network-01"
           RG_ALERT_NAME="rg-${SERVICE_SHORT_NAME}-${ENV_CODE}-alert-01"
           VNET_NAME="vnet-${SERVICE_SHORT_NAME}-${ENV_CODE}-network-01"
-
-          RT_AGW_NAME="rt-${SERVICE_SHORT_NAME}-${ENV_CODE}-agw-01"
-          RT_PRIVATE_NAME="rt-${SERVICE_SHORT_NAME}-${ENV_CODE}-private-01"
-          RT_PROTECT_NAME="rt-${SERVICE_SHORT_NAME}-${ENV_CODE}-protect-01"
-          NSG_PRIVATE_NAME="nsg-${SERVICE_SHORT_NAME}-${ENV_CODE}-private-01"
-          NSG_PROTECT_NAME="nsg-${SERVICE_SHORT_NAME}-${ENV_CODE}-protect-01"
-
-          ACTION_GROUP_SHORT_NAME=$(echo "${SERVICE_SHORT_NAME}${ENV_CODE}" | tr -d '-' | cut -c 1-12)
-          ACTION_GROUP_NAME="ag-health-${SERVICE_SHORT_NAME}-${ENV_CODE}-01"
-          SERVICE_HEALTH_ALERT_NAME="alr-health-${SERVICE_SHORT_NAME}-${ENV_CODE}-01"
-          BUDGET_NAME="budget-${ENV_CODE}-${BILLING_COMPANY_CODE}-${SERVICE_NAME}"
-
-          SPOKE_TO_HUB_PEERING_NAME="peer-${VNET_NAME}-to-hub"
-          HUB_TO_SPOKE_PEERING_NAME="peer-hub-to-${VNET_NAME}"
+          STATIC_CIDR_NAME="${{ inputs.jira_issue_key }}-${SERVICE_SHORT_NAME}-${ENV_CODE}"
 
           echo "billing_company_name=$BILLING_COMPANY_NAME" >> "$GITHUB_OUTPUT"
           echo "billing_company_code=$BILLING_COMPANY_CODE" >> "$GITHUB_OUTPUT"
           echo "env_code=$ENV_CODE" >> "$GITHUB_OUTPUT"
           echo "management_group_id=$MANAGEMENT_GROUP_ID" >> "$GITHUB_OUTPUT"
-          echo "use_hub_gateway=$USE_HUB_GATEWAY" >> "$GITHUB_OUTPUT"
           echo "subscription_name=$SUBSCRIPTION_NAME" >> "$GITHUB_OUTPUT"
           echo "file_name=$FILE_NAME" >> "$GITHUB_OUTPUT"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
           echo "rg_network_name=$RG_NETWORK_NAME" >> "$GITHUB_OUTPUT"
           echo "rg_alert_name=$RG_ALERT_NAME" >> "$GITHUB_OUTPUT"
           echo "vnet_name=$VNET_NAME" >> "$GITHUB_OUTPUT"
-          echo "rt_agw_name=$RT_AGW_NAME" >> "$GITHUB_OUTPUT"
-          echo "rt_private_name=$RT_PRIVATE_NAME" >> "$GITHUB_OUTPUT"
-          echo "rt_protect_name=$RT_PROTECT_NAME" >> "$GITHUB_OUTPUT"
-          echo "nsg_private_name=$NSG_PRIVATE_NAME" >> "$GITHUB_OUTPUT"
-          echo "nsg_protect_name=$NSG_PROTECT_NAME" >> "$GITHUB_OUTPUT"
-          echo "action_group_short_name=$ACTION_GROUP_SHORT_NAME" >> "$GITHUB_OUTPUT"
-          echo "action_group_name=$ACTION_GROUP_NAME" >> "$GITHUB_OUTPUT"
-          echo "service_health_alert_name=$SERVICE_HEALTH_ALERT_NAME" >> "$GITHUB_OUTPUT"
-          echo "budget_name=$BUDGET_NAME" >> "$GITHUB_OUTPUT"
-          echo "spoke_to_hub_peering_name=$SPOKE_TO_HUB_PEERING_NAME" >> "$GITHUB_OUTPUT"
-          echo "hub_to_spoke_peering_name=$HUB_TO_SPOKE_PEERING_NAME" >> "$GITHUB_OUTPUT"
+          echo "static_cidr_name=$STATIC_CIDR_NAME" >> "$GITHUB_OUTPUT"
+          echo "ipam_pool_resource_id=$IPAM_POOL_RESOURCE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Allocate VNet CIDR from AVNM IPAM
+        id: ipam
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONFIG_PATTERN='${{ inputs.configuration_pattern }}'
+          CUSTOM_VNET_CIDR='${{ inputs.custom_vnet_cidr }}'
+          IPAM_POOL_ID='${{ steps.vars.outputs.ipam_pool_resource_id }}'
+          STATIC_CIDR_NAME='${{ steps.vars.outputs.static_cidr_name }}'
+          API_VERSION='2024-05-01'
+
+          if [ -z "$IPAM_POOL_ID" ]; then
+            echo "IPAM pool resource id is required" >&2
+            exit 1
+          fi
+
+          if [[ "$CONFIG_PATTERN" == *"パターン④"* ]]; then
+            if [ -z "$CUSTOM_VNET_CIDR" ]; then
+              echo "custom_vnet_cidr is required for パターン④" >&2
+              exit 1
+            fi
+
+            if [[ "$CUSTOM_VNET_CIDR" =~ ^/[0-9]{1,2}$ ]]; then
+              PREFIX_LEN="${CUSTOM_VNET_CIDR#/}"
+            else
+              echo "vnet_cidr=$CUSTOM_VNET_CIDR" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            PREFIX_LEN=23
+          fi
+
+          NUMBER_OF_IPS=$((2 ** (32 - PREFIX_LEN)))
+          STATIC_CIDR_ID="${IPAM_POOL_ID}/staticCidrs/${STATIC_CIDR_NAME}"
+          STATIC_CIDR_URI="https://management.azure.com${STATIC_CIDR_ID}?api-version=${API_VERSION}"
+
+          if az rest --method get --uri "$STATIC_CIDR_URI" >/tmp/static-cidr.json 2>/dev/null; then
+            CIDR=$(jq -r '.properties.addressPrefixes[0]' /tmp/static-cidr.json)
+            if [ -z "$CIDR" ] || [ "$CIDR" = "null" ]; then
+              echo "Existing static CIDR found, but addressPrefixes[0] is empty." >&2
+              cat /tmp/static-cidr.json
+              exit 1
+            fi
+            echo "vnet_cidr=$CIDR" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          cat >/tmp/static-cidr-body.json <<EOF
+          {
+            "properties": {
+              "numberOfIPAddressesToAllocate": ${NUMBER_OF_IPS}
+            }
+          }
+          EOF
+
+          az rest \
+            --method put \
+            --uri "$STATIC_CIDR_URI" \
+            --headers Content-Type=application/json \
+            --body @/tmp/static-cidr-body.json \
+            >/tmp/static-cidr-create.json
+
+          az rest --method get --uri "$STATIC_CIDR_URI" >/tmp/static-cidr-result.json
+          CIDR=$(jq -r '.properties.addressPrefixes[0]' /tmp/static-cidr-result.json)
+
+          if [ -z "$CIDR" ] || [ "$CIDR" = "null" ]; then
+            echo "Failed to allocate CIDR from AVNM IPAM pool." >&2
+            cat /tmp/static-cidr-result.json
+            exit 1
+          fi
+
+          echo "Allocated CIDR: $CIDR"
+          echo "vnet_cidr=$CIDR" >> "$GITHUB_OUTPUT"
 
       - name: Generate subscriptions yaml
         shell: bash
@@ -170,6 +236,17 @@ jobs:
           SUB_OWNER='${{ inputs.subscription_owner_email }}'
           SUB_ADMIN='${{ inputs.subscription_admin_email }}'
           CONFIG_PATTERN='${{ inputs.configuration_pattern }}'
+          ENV_CODE='${{ steps.vars.outputs.env_code }}'
+          RG_NETWORK_NAME='${{ steps.vars.outputs.rg_network_name }}'
+          RG_ALERT_NAME='${{ steps.vars.outputs.rg_alert_name }}'
+          VNET_NAME='${{ steps.vars.outputs.vnet_name }}'
+          VNET_CIDR='${{ steps.ipam.outputs.vnet_cidr }}'
+
+          if [ "$ENV_CODE" = "dev" ]; then
+            USE_HUB_GATEWAY="false"
+          else
+            USE_HUB_GATEWAY="true"
+          fi
 
           cat <<EOF >> "$FILE"
           subscription_name: "${{ steps.vars.outputs.subscription_name }}"
@@ -184,6 +261,14 @@ jobs:
             owner: "${{ inputs.subscription_owner_email }}"
             deployed_by: "Terraform"
 
+          alert_contacts:
+            - name: "subscription-owner"
+              email_address: "${{ inputs.notification_email_1 }}"
+            - name: "subscription-owner2"
+              email_address: "${{ inputs.notification_email_2 }}"
+
+          budget: "${{ inputs.budget }}"
+
           rbac_assignments:
           EOF
 
@@ -193,31 +278,11 @@ jobs:
 
           resource_groups:
             network:
-              name: "${{ steps.vars.outputs.rg_network_name }}"
+              name: "${RG_NETWORK_NAME}"
               location: "japaneast"
-            alert:
-              name: "${{ steps.vars.outputs.rg_alert_name }}"
+            application:
+              name: "${RG_ALERT_NAME}"
               location: "japaneast"
-
-          alerts:
-            resource_group_name: "${{ steps.vars.outputs.rg_alert_name }}"
-            action_group_name: "${{ steps.vars.outputs.action_group_name }}"
-            service_health_alert_name: "${{ steps.vars.outputs.service_health_alert_name }}"
-            group_short_name: "${{ steps.vars.outputs.action_group_short_name }}"
-            contacts:
-              - name: "subscription-owner"
-                email_address: "${{ inputs.notification_email_1 }}"
-              - name: "subscription-owner2"
-                email_address: "${{ inputs.notification_email_2 }}"
-
-          budget:
-            enabled: ${{ inputs.budget_alert_enabled }}
-            name: "${{ steps.vars.outputs.budget_name }}"
-            amount: ${{ inputs.budget }}
-            threshold: 80
-            contact_emails:
-              - "${{ inputs.notification_email_1 }}"
-              - "${{ inputs.notification_email_2 }}"
           EOF
 
           case "$CONFIG_PATTERN" in
@@ -228,27 +293,20 @@ jobs:
               cat <<EOF >> "$FILE"
 
           virtual_network:
-            name: "${{ steps.vars.outputs.vnet_name }}"
-            resource_group_name: "${{ steps.vars.outputs.rg_network_name }}"
-            address_space: ["/23"]
+            name: "${VNET_NAME}"
+            resource_group_name: "${RG_NETWORK_NAME}"
+            address_space: ["${VNET_CIDR}"]
             hub_peering_enabled: true
-            use_hub_gateway: ${{ steps.vars.outputs.use_hub_gateway }}
-            spoke_to_hub_peering_name: "${{ steps.vars.outputs.spoke_to_hub_peering_name }}"
-            hub_to_spoke_peering_name: "${{ steps.vars.outputs.hub_to_spoke_peering_name }}"
+            use_hub_gateway: ${USE_HUB_GATEWAY}
             subnets:
               - name: "ApplicationGatewaySubnet"
                 address_prefix: "/24"
-                route_table_name: "${{ steps.vars.outputs.rt_agw_name }}"
               - name: "AzureFirewallSubnet"
                 address_prefix: "/26"
               - name: "PrivateSubnet"
                 address_prefix: "/26"
-                route_table_name: "${{ steps.vars.outputs.rt_private_name }}"
-                network_security_group_name: "${{ steps.vars.outputs.nsg_private_name }}"
               - name: "ProtectSubnet"
                 address_prefix: "/27"
-                route_table_name: "${{ steps.vars.outputs.rt_protect_name }}"
-                network_security_group_name: "${{ steps.vars.outputs.nsg_protect_name }}"
           EOF
               ;;
 
@@ -256,23 +314,18 @@ jobs:
               cat <<EOF >> "$FILE"
 
           virtual_network:
-            name: "${{ steps.vars.outputs.vnet_name }}"
-            resource_group_name: "${{ steps.vars.outputs.rg_network_name }}"
-            address_space: ["/23"]
+            name: "${VNET_NAME}"
+            resource_group_name: "${RG_NETWORK_NAME}"
+            address_space: ["${VNET_CIDR}"]
             hub_peering_enabled: true
-            use_hub_gateway: ${{ steps.vars.outputs.use_hub_gateway }}
-            spoke_to_hub_peering_name: "${{ steps.vars.outputs.spoke_to_hub_peering_name }}"
-            hub_to_spoke_peering_name: "${{ steps.vars.outputs.hub_to_spoke_peering_name }}"
+            use_hub_gateway: ${USE_HUB_GATEWAY}
             subnets:
               - name: "ApplicationGatewaySubnet"
                 address_prefix: "/24"
-                route_table_name: "${{ steps.vars.outputs.rt_agw_name }}"
               - name: "AzureFirewallSubnet"
                 address_prefix: "/26"
               - name: "PrivateSubnet"
                 address_prefix: "/26"
-                route_table_name: "${{ steps.vars.outputs.rt_private_name }}"
-                network_security_group_name: "${{ steps.vars.outputs.nsg_private_name }}"
           EOF
               ;;
 
@@ -280,27 +333,20 @@ jobs:
               cat <<EOF >> "$FILE"
 
           virtual_network:
-            name: "${{ steps.vars.outputs.vnet_name }}"
-            resource_group_name: "${{ steps.vars.outputs.rg_network_name }}"
-            address_space: ["${{ inputs.custom_vnet_cidr }}"]
+            name: "${VNET_NAME}"
+            resource_group_name: "${RG_NETWORK_NAME}"
+            address_space: ["${VNET_CIDR}"]
             hub_peering_enabled: true
-            use_hub_gateway: ${{ steps.vars.outputs.use_hub_gateway }}
-            spoke_to_hub_peering_name: "${{ steps.vars.outputs.spoke_to_hub_peering_name }}"
-            hub_to_spoke_peering_name: "${{ steps.vars.outputs.hub_to_spoke_peering_name }}"
+            use_hub_gateway: ${USE_HUB_GATEWAY}
             subnets:
               - name: "ApplicationGatewaySubnet"
                 address_prefix: "${{ inputs.custom_appgw_subnet_cidr }}"
-                route_table_name: "${{ steps.vars.outputs.rt_agw_name }}"
               - name: "AzureFirewallSubnet"
                 address_prefix: "/26"
               - name: "PrivateSubnet"
                 address_prefix: "${{ inputs.custom_private_subnet_cidr }}"
-                route_table_name: "${{ steps.vars.outputs.rt_private_name }}"
-                network_security_group_name: "${{ steps.vars.outputs.nsg_private_name }}"
               - name: "ProtectSubnet"
                 address_prefix: "${{ inputs.custom_protect_subnet_cidr }}"
-                route_table_name: "${{ steps.vars.outputs.rt_protect_name }}"
-                network_security_group_name: "${{ steps.vars.outputs.nsg_protect_name }}"
           EOF
               ;;
 
@@ -308,25 +354,18 @@ jobs:
               cat <<EOF >> "$FILE"
 
           virtual_network:
-            name: "${{ steps.vars.outputs.vnet_name }}"
-            resource_group_name: "${{ steps.vars.outputs.rg_network_name }}"
-            address_space: ["/23"]
+            name: "${VNET_NAME}"
+            resource_group_name: "${RG_NETWORK_NAME}"
+            address_space: ["${VNET_CIDR}"]
             hub_peering_enabled: true
-            use_hub_gateway: ${{ steps.vars.outputs.use_hub_gateway }}
-            spoke_to_hub_peering_name: "${{ steps.vars.outputs.spoke_to_hub_peering_name }}"
-            hub_to_spoke_peering_name: "${{ steps.vars.outputs.hub_to_spoke_peering_name }}"
+            use_hub_gateway: ${USE_HUB_GATEWAY}
             subnets:
               - name: "ApplicationGatewaySubnet"
                 address_prefix: "/24"
-                route_table_name: "${{ steps.vars.outputs.rt_agw_name }}"
               - name: "PrivateSubnet"
                 address_prefix: "/26"
-                route_table_name: "${{ steps.vars.outputs.rt_private_name }}"
-                network_security_group_name: "${{ steps.vars.outputs.nsg_private_name }}"
               - name: "ProtectSubnet"
                 address_prefix: "/27"
-                route_table_name: "${{ steps.vars.outputs.rt_protect_name }}"
-                network_security_group_name: "${{ steps.vars.outputs.nsg_protect_name }}"
           EOF
               ;;
           esac
@@ -345,13 +384,20 @@ jobs:
             billing_company_raw: "${{ inputs.billing_company }}"
             environment_raw: "${{ inputs.environment }}"
             configuration_pattern: "${{ inputs.configuration_pattern }}"
+            service_name: "${{ inputs.service_name }}"
+            service_short_name: "${{ inputs.service_short_name }}"
+          EOF
+
+          case "$CONFIG_PATTERN" in
+            *"パターン④"*)
+              cat <<EOF >> "$FILE"
             custom_vnet_cidr: "${{ inputs.custom_vnet_cidr }}"
             custom_private_subnet_cidr: "${{ inputs.custom_private_subnet_cidr }}"
             custom_protect_subnet_cidr: "${{ inputs.custom_protect_subnet_cidr }}"
             custom_appgw_subnet_cidr: "${{ inputs.custom_appgw_subnet_cidr }}"
-            service_name: "${{ inputs.service_name }}"
-            service_short_name: "${{ inputs.service_short_name }}"
           EOF
+              ;;
+          esac
 
       - name: Create pull request
         id: cpr
@@ -375,6 +421,7 @@ jobs:
             - network RG名: `${{ steps.vars.outputs.rg_network_name }}`
             - alert RG名: `${{ steps.vars.outputs.rg_alert_name }}`
             - VNet名: `${{ steps.vars.outputs.vnet_name }}`
+            - VNet CIDR: `${{ steps.ipam.outputs.vnet_cidr }}`
 
             ## 入力値
             | 項目 | 値 |
@@ -392,7 +439,7 @@ jobs:
             | 通知先2 | `${{ inputs.notification_email_2 }}` |
             | 予算 | `${{ inputs.budget }}` |
             | 予算アラート利用 | `${{ inputs.budget_alert_enabled }}` |
-            | VNet CIDR | `${{ inputs.custom_vnet_cidr }}` |
+            | VNet CIDR | `${{ steps.ipam.outputs.vnet_cidr }}` |
             | PrivateSubnet CIDR | `${{ inputs.custom_private_subnet_cidr }}` |
             | ProtectSubnet CIDR | `${{ inputs.custom_protect_subnet_cidr }}` |
             | ApplicationGatewaySubnet CIDR | `${{ inputs.custom_appgw_subnet_cidr }}` |

@@ -1,0 +1,138 @@
+# =============================================================================
+# Subscription Vending 用 YAML テンプレート
+# =============================================================================
+# 使い方:
+# - 1ファイル = 1サブスクリプション
+# - ファイル名は識別しやすい名前にする
+#   例: subscription_prod_PHD_sample01.yaml
+# - 新規作成時は subscription_id を書かない
+# - 既存サブスクリプションを管理対象にしたい場合だけ subscription_id を書く
+# =============================================================================
+
+# --- 必須: Azure上に作成/管理するサブスクリプション名 ---
+subscription_name: "subscription_prod_PHD_shuheitest01"
+
+# --- 任意: 既存サブスクリプションを使う場合だけ指定 ---
+# 未指定なら Terraform が新規作成する
+# subscription_id: "00000000-0000-0000-0000-000000000000"
+
+# --- 必須: Workload 種別 ---
+# 例: Production / DevTest
+workload_type: "Production"
+
+# --- 必須: 配置先の管理グループID ---
+management_group_id: "Producrion"
+
+# --- 必須: リージョン ---
+location: "japaneast"
+
+# --- 必須: 環境の短縮名 ---
+# 例: prod / stg / dev
+env_short_name: "prod"
+
+# --- 必須: タグ ---
+tags:
+  environment: "prod"
+  cost_center: "パーソルホールディングス株式会社"
+  owner: "shuhei@testcojp596.onmicrosoft.com"
+  deployed_by: "Terraform"
+
+# --- 任意: 正常性アラートの通知先 ---
+# 1件以上あれば Action Group / Service Health Alert を作成する
+# 不要なら alert_contacts 自体を省略可能
+alert_contacts:
+  - name: "subscription-owner"
+    email_address: "shuhei@testcojp596.onmicrosoft.com"
+  - name: "subscription-owner2"
+    email_address: "shuhei2@testcojp596.onmicrosoft.com"
+
+# --- 任意: 月次予算 ---
+# 文字列で指定する
+# 例: "10000000"
+# 未指定なら予算アラートは作成しない
+budget: "10000000"
+
+# --- 任意: RBAC付与対象 ---
+# 指定したユーザーへ User Access Administrator を付与する
+# 空文字は無視される
+# 複数指定可能
+# 例:
+# rbac_assignments:
+#   - "user1@example.com"
+#   - "user2@example.com"
+rbac_assignments:
+  - "shuhei@testcojp596.onmicrosoft.com"
+
+# --- 必須: 作成するリソースグループ ---
+# network: VNet/NSG/RouteTable 用
+# application: Alert 用
+resource_groups:
+  network:
+    name: "rg-shutest-prod-network-01"
+    location: "japaneast"
+  application:
+    name: "rg-shutest-prod-alert-01"
+    location: "japaneast"
+
+# --- 任意: VNet を作る場合だけ指定 ---
+# virtual_network を省略すると、VNet/NSG/RouteTable/Subnet/Peering は作られない
+virtual_network:
+  # 必須: VNet 名
+  name: "vnet-shutest-prod-network-01"
+
+  # 必須: VNet を配置する RG 名
+  resource_group_name: "rg-shutest-prod-network-01"
+
+  # 必須: VNet の CIDR
+  # 先頭1件を基準にサブネットIPを自動採番する
+  address_space: ["192.168.0.0/23"]
+
+  # 任意: Hub との Peering を作るか
+  hub_peering_enabled: true
+
+  # 任意: Hub Gateway を使うか
+  # true の場合、Hub 側に Gateway が必要
+  use_hub_gateway: false
+
+  # 任意: サブネット一覧
+  # address_range を明示しない場合、address_prefix を使って前から順に自動採番
+  # address_prefix は "/24" のようにプレフィックス長のみ書く
+  # address_range を使う場合は完全CIDRを書く
+  subnets:
+    - name: "ApplicationGatewaySubnet"
+      address_prefix: "/24"
+
+    - name: "AzureFirewallSubnet"
+      address_prefix: "/26"
+
+    - name: "PrivateSubnet"
+      address_prefix: "/26"
+
+    - name: "ProtectSubnet"
+      address_prefix: "/27"
+
+    # 完全CIDRを明示したい場合の例
+    # - name: "PrivateSubnet"
+    #   address_range: "192.168.1.64/26"
+
+# --- 任意: 申請メタ情報 ---
+# 主に管理・追跡用途
+# Terraformの主動作には service_name / service_short_name などが使われる
+subscription_request:
+  jira_issue_key: "AZP-693"
+  request_type: "作成"
+  subscription_owner_email: "shuhei70720_gmail.com#EXT#@shuhei70720gmail.onmicrosoft.com"
+  subscription_admin_email: "shuhei70720_gmail.com#EXT#@shuhei70720gmail.onmicrosoft.com"
+  notification_email_1: "shuhei70720_gmail.com#EXT#@shuhei70720gmail.onmicrosoft.com"
+  notification_email_2: "shuhei70720_gmail.com#EXT#@shuhei70720gmail.onmicrosoft.com"
+  budget: "10000000"
+  budget_alert_enabled: "はい"
+  billing_company_raw: "パーソルホールディングス株式会社（PHD）"
+  environment_raw: "本番環境"
+  configuration_pattern: "Azure上にシステムを構築する（パターン④：カスタム構成）"
+  service_name: "shuheitest"
+  service_short_name: "shutest"
+  custom_vnet_cidr: "/24"
+  custom_private_subnet_cidr: "/26"
+  custom_protect_subnet_cidr: "/26"
+  custom_appgw_subnet_cidr: "/26"

@@ -2,7 +2,7 @@
 # Subscription Creation
 # =============================================================================
 
-# subscription_id 未指定の YAML だけ新規サブスクリプションを作成
+# YAMLに subscription_id がないものだけ新規サブスクリプションを作成
 resource "azurerm_subscription" "vending" {
   for_each = local.subscriptions_to_create
 
@@ -13,7 +13,7 @@ resource "azurerm_subscription" "vending" {
   tags              = local.subscriptions[each.key].tags
 }
 
-# 新規作成直後の API 反映待ち
+# 作成直後の Azure 側の反映待ち
 resource "time_sleep" "wait_for_subscription" {
   for_each = local.subscriptions_to_create
 
@@ -25,7 +25,7 @@ resource "time_sleep" "wait_for_subscription" {
 # Management Group Association
 # =============================================================================
 
-# 新規作成したサブスクリプションを Management Group に紐付け
+# 新規作成したサブスクリプションを管理グループに紐付け
 resource "azapi_resource" "vending_mg_association" {
   for_each = local.subscriptions_to_create
 
@@ -40,7 +40,7 @@ resource "azapi_resource" "vending_mg_association" {
   }
 }
 
-# 既存サブスクリプションも Management Group に紐付け
+# 既存サブスクリプションも管理グループに紐付け
 resource "azapi_resource" "vending_mg_association_existing" {
   for_each = local.subscriptions_with_ids
 
@@ -59,7 +59,7 @@ resource "azapi_resource" "vending_mg_association_existing" {
 # RBAC Assignments
 # =============================================================================
 
-# UPN から Azure AD User を引く
+# UPN から object_id を引く
 data "azuread_user" "vending_rbac_users" {
   for_each = {
     for pair in flatten([
@@ -75,7 +75,7 @@ data "azuread_user" "vending_rbac_users" {
   user_principal_name = each.value.upn
 }
 
-# 対象ユーザーへ subscription scope の RBAC を付与
+# User Access Administrator を subscription スコープで付与
 resource "azurerm_role_assignment" "vending_user_access_administrator" {
   for_each = data.azuread_user.vending_rbac_users
 
@@ -88,7 +88,7 @@ resource "azurerm_role_assignment" "vending_user_access_administrator" {
 # Resource Groups
 # =============================================================================
 
-# network / alert 用 Resource Group を作成
+# network / alert 用 RG を作成
 resource "azapi_resource" "vending_resource_groups" {
   for_each = local.vending_resource_groups
 
@@ -136,7 +136,7 @@ resource "azapi_resource" "spoke_action_group" {
   lifecycle { ignore_changes = all }
 }
 
-# Service Health 用 Activity Log Alert
+# Service Health の Activity Log Alert
 resource "azapi_resource" "service_health" {
   for_each = local.vending_with_alerts
 
@@ -179,7 +179,6 @@ resource "azapi_resource" "service_health" {
 # Budget Alert
 # =============================================================================
 
-# Subscription 単位の月次予算
 resource "azurerm_consumption_budget_subscription" "vending" {
   for_each = local.vending_with_budget
 
@@ -213,7 +212,7 @@ resource "azurerm_consumption_budget_subscription" "vending" {
 # VNet
 # =============================================================================
 
-# VNet 本体を作成
+# Spoke VNet 本体を作成
 resource "azapi_resource" "vending_vnet" {
   for_each = local.vending_with_vnet
 
@@ -223,45 +222,27 @@ resource "azapi_resource" "vending_vnet" {
   location  = each.value.location
   tags      = each.value.tags
 
-  # azapi 側 schema が IPAM 拡張に追従していないため無効化
-  schema_validation_enabled = false
-
-  body = {
-    properties = merge(
-      {
-        addressSpace = merge(
-          each.value.use_ipam ? {
-            ipamPoolPrefixAllocations = [
-              {
-                numberOfIpAddresses = tostring(pow(2, 32 - each.value.ipam_prefix_length))
-                pool = {
-                  id = each.value.hub.spoke_ipam_pool_id
-                }
-              }
-            ]
-          } : {},
-          each.value.use_ipam ? {} : {
-            addressPrefixes = each.value.address_space
-          }
-        )
-      },
-      try(length(each.value.hub.hub_dns_servers), 0) > 0 ? {
-        dhcpOptions = {
-          dnsServers = each.value.hub.hub_dns_servers
-        }
-      } : {}
-    )
-  }
-
-  # 実CIDR を locals から参照するため export
-  response_export_values = ["properties.addressSpace.addressPrefixes"]
+body = {
+  properties = merge(
+    {
+      addressSpace = {
+        addressPrefixes = each.value.address_space
+      }
+    },
+    try(length(each.value.hub.hub_dns_servers), 0) > 0 ? {
+      dhcpOptions = {
+        dnsServers = each.value.hub.hub_dns_servers
+      }
+    } : {}
+  )
+}
 
   depends_on = [azapi_resource.vending_resource_groups]
 
   lifecycle { ignore_changes = all }
 }
 
-# VNet 作成後に DNS 設定だけ別 PATCH
+# DNSサーバーだけは別PATCHで管理
 resource "azapi_update_resource" "vending_vnet_dns" {
   for_each = {
     for k, v in local.vending_with_vnet : k => v
@@ -280,172 +261,6 @@ resource "azapi_update_resource" "vending_vnet_dns" {
   }
 
   depends_on = [azapi_resource.vending_vnet]
-}
-
-# =============================================================================
-# Subnets (ordered: AGW -> FW -> Private -> Protect)
-# =============================================================================
-
-# ApplicationGatewaySubnet を最初に作成
-resource "azapi_resource" "vending_subnets_agw" {
-  for_each = local.vending_subnets_agw
-
-  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  name      = each.value.name
-  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      defaultOutboundAccess = false
-      ipamPoolPrefixAllocations = [
-        {
-          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-          pool = {
-            id = each.value.ipam_pool_id
-          }
-        }
-      ]
-    }
-  }
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
-  }
-
-  depends_on = [azapi_update_resource.vending_vnet_dns]
-
-  lifecycle { ignore_changes = all }
-}
-
-# AzureFirewallSubnet を 2 番目に作成
-resource "azapi_resource" "vending_subnets_fw" {
-  for_each = local.vending_subnets_fw
-
-  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  name      = each.value.name
-  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      defaultOutboundAccess = false
-      ipamPoolPrefixAllocations = [
-        {
-          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-          pool = {
-            id = each.value.ipam_pool_id
-          }
-        }
-      ]
-    }
-  }
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
-  }
-
-  depends_on = [azapi_resource.vending_subnets_agw]
-
-  lifecycle { ignore_changes = all }
-}
-
-# PrivateSubnet を 3 番目に作成
-resource "azapi_resource" "vending_subnets_private" {
-  for_each = local.vending_subnets_private
-
-  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  name      = each.value.name
-  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      defaultOutboundAccess = false
-      ipamPoolPrefixAllocations = [
-        {
-          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-          pool = {
-            id = each.value.ipam_pool_id
-          }
-        }
-      ]
-    }
-  }
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
-  }
-
-  depends_on = [azapi_resource.vending_subnets_fw]
-
-  lifecycle { ignore_changes = all }
-}
-
-# ProtectSubnet を最後に作成
-resource "azapi_resource" "vending_subnets_protect" {
-  for_each = local.vending_subnets_protect
-
-  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  name      = each.value.name
-  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      defaultOutboundAccess = false
-      ipamPoolPrefixAllocations = [
-        {
-          numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-          pool = {
-            id = each.value.ipam_pool_id
-          }
-        }
-      ]
-    }
-  }
-
-  retry = {
-    error_message_regex  = ["AnotherOperationInProgress", "InUseSubnetCannotBeUpdated"]
-    interval_seconds     = 10
-    max_interval_seconds = 60
-  }
-
-  depends_on = [azapi_resource.vending_subnets_private]
-
-  lifecycle { ignore_changes = all }
-}
-
-# 作成済み Subnet の実CIDRや現在設定を取得
-data "azapi_resource" "vending_subnet_read" {
-  for_each = local.vending_subnets
-
-  type = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  resource_id = coalesce(
-    try(azapi_resource.vending_subnets_agw[each.key].id, null),
-    try(azapi_resource.vending_subnets_fw[each.key].id, null),
-    try(azapi_resource.vending_subnets_private[each.key].id, null),
-    try(azapi_resource.vending_subnets_protect[each.key].id, null)
-  )
-
-  response_export_values = ["*"]
-
-  depends_on = [
-    azapi_resource.vending_subnets_agw,
-    azapi_resource.vending_subnets_fw,
-    azapi_resource.vending_subnets_private,
-    azapi_resource.vending_subnets_protect
-  ]
 }
 
 # =============================================================================
@@ -510,8 +325,6 @@ resource "azapi_resource" "vending_nsg_protect" {
   location  = each.value.location
   tags      = each.value.tags
 
-  schema_validation_enabled = false
-
   body = {
     properties = {
       securityRules = [
@@ -524,7 +337,7 @@ resource "azapi_resource" "vending_nsg_protect" {
             protocol                 = "*"
             sourcePortRange          = "*"
             destinationPortRange     = "*"
-            sourceAddressPrefix      = local.private_subnet_map[each.key].effective_address_prefix
+            sourceAddressPrefix      = each.value.private_subnet.effective_address_prefix
             destinationAddressPrefix = "*"
           }
         },
@@ -545,10 +358,7 @@ resource "azapi_resource" "vending_nsg_protect" {
     }
   }
 
-  depends_on = [
-    azapi_resource.vending_resource_groups,
-    data.azapi_resource.vending_subnet_read
-  ]
+  depends_on = [azapi_resource.vending_resource_groups]
 
   lifecycle { ignore_changes = all }
 }
@@ -557,7 +367,7 @@ resource "azapi_resource" "vending_nsg_protect" {
 # Route Table
 # =============================================================================
 
-# AGW 用 Route Table
+# AGW 用 RT
 resource "azapi_resource" "vending_rt_agw" {
   for_each = local.vending_rt_agw
 
@@ -567,32 +377,27 @@ resource "azapi_resource" "vending_rt_agw" {
   location  = each.value.location
   tags      = each.value.tags
 
-  schema_validation_enabled = false
-
   body = {
     properties = {
       routes = [
         {
           name = "ToFW"
           properties = {
-            addressPrefix    = local.private_subnet_map[each.key].effective_address_prefix
+            addressPrefix    = each.value.private_subnet.effective_address_prefix
             nextHopType      = "VirtualAppliance"
-            nextHopIpAddress = local.spoke_fw_ip_map[each.key]
+            nextHopIpAddress = each.value.spoke_fw_ip
           }
         }
       ]
     }
   }
 
-  depends_on = [
-    azapi_resource.vending_resource_groups,
-    data.azapi_resource.vending_subnet_read
-  ]
+  depends_on = [azapi_resource.vending_resource_groups]
 
   lifecycle { ignore_changes = [body] }
 }
 
-# PrivateSubnet 用 Route Table
+# PrivateSubnet 用 RT
 resource "azapi_resource" "vending_rt_private" {
   for_each = local.vending_rt_private
 
@@ -601,8 +406,6 @@ resource "azapi_resource" "vending_rt_private" {
   parent_id = "/subscriptions/${local.resolved_subscription_ids[each.key]}/resourceGroups/${each.value.vnet_rg_name}"
   location  = each.value.location
   tags      = each.value.tags
-
-  schema_validation_enabled = false
 
   body = {
     properties = {
@@ -618,13 +421,13 @@ resource "azapi_resource" "vending_rt_private" {
             }
           }
         ],
-        try(local.agw_subnet_map[each.key], null) != null && try(local.spoke_fw_ip_map[each.key], null) != null ? [
+        each.value.agw_subnet != null && each.value.spoke_fw_ip != null ? [
           {
             name = "toAFW"
             properties = {
-              addressPrefix    = local.agw_subnet_map[each.key].effective_address_prefix
+              addressPrefix    = each.value.agw_subnet.effective_address_prefix
               nextHopType      = "VirtualAppliance"
-              nextHopIpAddress = local.spoke_fw_ip_map[each.key]
+              nextHopIpAddress = each.value.spoke_fw_ip
             }
           }
         ] : []
@@ -632,15 +435,12 @@ resource "azapi_resource" "vending_rt_private" {
     }
   }
 
-  depends_on = [
-    azapi_resource.vending_resource_groups,
-    data.azapi_resource.vending_subnet_read
-  ]
+  depends_on = [azapi_resource.vending_resource_groups]
 
   lifecycle { ignore_changes = [body] }
 }
 
-# ProtectSubnet 用 Route Table
+# ProtectSubnet 用 RT
 resource "azapi_resource" "vending_rt_protect" {
   for_each = local.vending_rt_protect
 
@@ -672,34 +472,22 @@ resource "azapi_resource" "vending_rt_protect" {
 }
 
 # =============================================================================
-# Subnet association (RT / NSG)
+# Subnets
 # =============================================================================
 
-# Subnet へ RT / NSG を後付け
-# ※ IPAM 情報を保持したい場合は、必要プロパティを明示的に含めて PUT する必要あり
-resource "azapi_update_resource" "vending_subnets_association" {
+# サブネットごとに NSG / RT を条件付きで関連付け
+resource "azapi_resource" "vending_subnets" {
   for_each = local.vending_subnets
 
-  type = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
-  resource_id = coalesce(
-    try(azapi_resource.vending_subnets_agw[each.key].id, null),
-    try(azapi_resource.vending_subnets_fw[each.key].id, null),
-    try(azapi_resource.vending_subnets_private[each.key].id, null),
-    try(azapi_resource.vending_subnets_protect[each.key].id, null)
-  )
+  type      = "Microsoft.Network/virtualNetworks/subnets@2024-01-01"
+  name      = each.value.name
+  parent_id = azapi_resource.vending_vnet[each.value.sub_key].id
 
   body = {
     properties = merge(
       {
+        addressPrefix         = each.value.effective_address_prefix
         defaultOutboundAccess = false
-        ipamPoolPrefixAllocations = [
-          {
-            numberOfIpAddresses = tostring(pow(2, 32 - each.value.prefix_length))
-            pool = {
-              id = each.value.ipam_pool_id
-            }
-          }
-        ]
       },
       each.value.name == "ApplicationGatewaySubnet" ? {
         routeTable = {
@@ -732,13 +520,15 @@ resource "azapi_update_resource" "vending_subnets_association" {
   }
 
   depends_on = [
-    data.azapi_resource.vending_subnet_read,
+    azapi_update_resource.vending_vnet_dns,
     azapi_resource.vending_nsg_private,
     azapi_resource.vending_nsg_protect,
     azapi_resource.vending_rt_agw,
     azapi_resource.vending_rt_private,
     azapi_resource.vending_rt_protect
   ]
+
+  lifecycle { ignore_changes = all }
 }
 
 # # =============================================================================
@@ -769,7 +559,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
 #     max_interval_seconds = 300
 #   }
 
-#   depends_on = [azapi_update_resource.vending_subnets_association]
+#   depends_on = [azapi_resource.vending_subnets]
 # }
 
 # # =============================================================================
@@ -800,7 +590,7 @@ resource "azapi_update_resource" "vending_subnets_association" {
 #     max_interval_seconds = 300
 #   }
 
-#   depends_on = [azapi_update_resource.vending_subnets_association]
+#   depends_on = [azapi_resource.vending_subnets]
 # }
 
 # # =============================================================================
