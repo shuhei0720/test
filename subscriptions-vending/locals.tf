@@ -23,13 +23,12 @@ locals {
   # YAML から使う値を整理
   subscriptions = {
     for k, v in local.subscriptions_raw : k => {
-      subscription_name   = v.subscription_name
-      workload_type       = try(v.workload_type, "Production")
-      management_group_id = v.management_group_id
-      location            = v.location
-      env_short_name      = v.env_short_name
-      tags                = try(v.tags, {})
-
+      subscription_name     = v.subscription_name
+      workload_type         = try(v.workload_type, "Production")
+      management_group_id   = v.management_group_id
+      location              = v.location
+      env_short_name        = v.env_short_name
+      tags                  = try(v.tags, {})
       enrollment_account_id = var.enrollment_account_id_map[v.tags.cost_center]
       billing_scope_id      = "/providers/Microsoft.Billing/billingAccounts/6d92e1a7-44ef-5b9d-fe85-600e31fecd27:7ffb2b72-d71a-46c2-ac74-10566d437c9e_2019-05-31/billingProfiles/KXVV-QQVV-BG7-PGB/invoiceSections/b5316415-c236-41e7-8237-fcf186346a73"
 
@@ -43,6 +42,7 @@ locals {
 
       rbac_assignments = [for x in try(v.rbac_assignments, []) : x if trimspace(x) != ""]
 
+      # 今後拡張
       alerts = try(v.alerts, null)
       budget = try(v.budget, null)
 
@@ -55,6 +55,14 @@ locals {
 
       spoke_to_hub_peering_name = try(v.virtual_network.spoke_to_hub_peering_name, null)
       hub_to_spoke_peering_name = try(v.virtual_network.hub_to_spoke_peering_name, null)
+
+      rt_agw_name      = try(one([for s in try(v.virtual_network.subnets, []) : s.route_table_name if s.name == "ApplicationGatewaySubnet"]), null)
+      rt_private_name  = try(one([for s in try(v.virtual_network.subnets, []) : s.route_table_name if s.name == "PrivateSubnet"]), null)
+      rt_protect_name  = try(one([for s in try(v.virtual_network.subnets, []) : s.route_table_name if s.name == "ProtectSubnet"]), null)
+      nsg_private_name = try(one([for s in try(v.virtual_network.subnets, []) : s.network_security_group_name if s.name == "PrivateSubnet"]), null)
+      nsg_protect_name = try(one([for s in try(v.virtual_network.subnets, []) : s.network_security_group_name if s.name == "ProtectSubnet"]), null)
+
+      hub = var.hub_environments[v.env_short_name]
 
       # サブネットを先頭から自動採番して CIDR 化
       # address_prefix に CIDR が指定されている場合はそのまま使用
@@ -204,14 +212,6 @@ locals {
           }
         ] : cidrhost(s.effective_address_prefix, 4) if s.name == "AzureFirewallSubnet"
       ]), null)
-
-      rt_agw_name      = try(one([for s in try(v.virtual_network.subnets, []) : s.route_table_name if s.name == "ApplicationGatewaySubnet"]), null)
-      rt_private_name  = try(one([for s in try(v.virtual_network.subnets, []) : s.route_table_name if s.name == "PrivateSubnet"]), null)
-      rt_protect_name  = try(one([for s in try(v.virtual_network.subnets, []) : s.route_table_name if s.name == "ProtectSubnet"]), null)
-      nsg_private_name = try(one([for s in try(v.virtual_network.subnets, []) : s.network_security_group_name if s.name == "PrivateSubnet"]), null)
-      nsg_protect_name = try(one([for s in try(v.virtual_network.subnets, []) : s.network_security_group_name if s.name == "ProtectSubnet"]), null)
-
-      hub = var.hub_environments[v.env_short_name]
     }
   }
 
@@ -233,6 +233,7 @@ locals {
     if length(v.rbac_assignments) > 0
   }
 
+  # 以下、今後実装
   # RG 用の for_each map
   vending_resource_groups = merge([
     for k, v in local.subscriptions : {

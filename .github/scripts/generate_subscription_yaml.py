@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Jira 申請情報から Terraform 用の subscriptions/*.yaml を生成するスクリプト。
+Jira 申請情報から Terraform 用の yamlパラメーターファイルを生成するスクリプト。
 
 このスクリプトの役割:
 - GitHub Actions input を環境変数から受け取る
@@ -83,12 +83,12 @@ custom_appgw_subnet_cidr = env("CUSTOM_APPGW_SUBNET_CIDR")
 
 
 # 請求先会社から会社名と会社コードを抽出する。
-# 例: パーソルホールディングス株式会社（PHD）
+# 入力は パーソルホールディングス株式会社（PHD） を想定
 billing_company_name = re.sub(r"（[^）]+）$", "", billing_company_raw)
 match = re.match(r"^.*（([^）]+)）$", billing_company_raw)
 billing_company_code = match.group(1) if match else billing_company_raw
 
-# Jira の環境名を Terraform / Azure 用の値へ変換する。
+# Jira の環境名を Terraform 用の値へ変換する。
 if environment_raw == "本番環境":
     env_code = "prod"
     management_group_id = "Producrion"
@@ -105,7 +105,7 @@ else:
 # dev 環境では Hub Gateway を使わない。
 use_hub_gateway = "false" if env_code == "dev" else "true"
 
-# YAML の budget.enabled は boolean として出力する。
+# YAML の budget.enabled は boolean として出力。
 budget_alert_enabled = bool_string(budget_alert_enabled_raw)
 
 
@@ -148,8 +148,7 @@ rbac_lines = "\n".join(
     [f'  - "{email}"' for email in unique_non_empty([subscription_owner_email, subscription_admin_email])]
 )
 
-# subscription_request 以外は Terraform が使う値を中心に出力する。
-# workload_type は locals.tf 側でデフォルト Production になるため出力しない。
+# yamlの生成
 yaml_text = f'''subscription_name: "{subscription_name}"
 management_group_id: "{management_group_id}"
 location: "japaneast"
@@ -193,6 +192,7 @@ budget:
     - "{notification_email_2}"
 '''
 
+# パターンごとに生成する VNet のブロックを分岐。
 # 構成パターン①は VNet なしなので virtual_network を出力しない。
 if "パターン②" in configuration_pattern:
     yaml_text += f'''
@@ -292,7 +292,7 @@ virtual_network:
       network_security_group_name: "{nsg_protect_name}"
 '''
 
-# subscription_request は Jira 申請情報をすべて原文で保持する。
+# subscription_request は Jira 申請情報を保持する目的。
 yaml_text += f'''
 subscription_request:
   jira_issue_key: "{jira_issue_key}"

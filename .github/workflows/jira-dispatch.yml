@@ -56,12 +56,10 @@ on:
         required: true
         type: string
 
-# 同じ Jira issue に対する二重実行を防ぐ
 concurrency:
   group: jira-dispatch-${{ inputs.jira_issue_key }}
   cancel-in-progress: false
 
-# 生成した YAML をコミットして PR を作るための権限
 permissions:
   contents: write
   pull-requests: write
@@ -71,19 +69,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # main ブランチをチェックアウトする
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: main
 
-      # Jira から受け取った input を Python スクリプトに渡す
-      # Python 側で以下をまとめて実施する
-      # - 会社名、会社コードの抽出
-      # - 環境コード、管理グループIDの導出
-      # - Terraform で作成する各種リソース名の生成
-      # - subscriptions/*.yaml の生成
-      # - PR 本文で使う値を GITHUB_OUTPUT に出力
+      # Jira から受け取った input を env経由で渡し、Pythonスクリプトを実行する。
       - name: Generate subscriptions yaml
         id: vars
         shell: bash
@@ -109,7 +100,7 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/generate_subscription_yaml.py
 
-      # Python が生成した subscriptions/*.yaml を feature ブランチにコミットし、PR を作成する
+      # Python が生成した yamlパラメーターファイル を feature ブランチにコミットし、PR を作成する
       - name: Create pull request
         id: cpr
         uses: peter-evans/create-pull-request@v7
