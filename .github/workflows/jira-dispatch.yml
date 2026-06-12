@@ -61,7 +61,7 @@ concurrency:
   group: jira-dispatch-${{ inputs.jira_issue_key }}
   cancel-in-progress: false
 
-# YAML ファイルをコミットして PR を作るために必要な権限
+# 生成した YAML をコミットして PR を作るための権限
 permissions:
   contents: write
   pull-requests: write
@@ -77,19 +77,11 @@ jobs:
         with:
           ref: main
 
-      # YAML 生成スクリプトで PyYAML を使うため、依存関係をインストールする
-      - name: Install Python dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --upgrade pip
-          pip install pyyaml
-
-      # Jira から受け取った input を Python に渡す
+      # Jira から受け取った input を Python スクリプトに渡す
       # Python 側で以下をまとめて実施する
       # - 会社名、会社コードの抽出
       # - 環境コード、管理グループIDの導出
-      # - 各種 Azure リソース名の生成
+      # - Terraform で作成する各種リソース名の生成
       # - subscriptions/*.yaml の生成
       # - PR 本文で使う値を GITHUB_OUTPUT に出力
       - name: Generate subscriptions yaml
