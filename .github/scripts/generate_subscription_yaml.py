@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-Jira 申請情報から Terraform 用の yamlパラメーターファイルを生成するスクリプト。
+Jira 申請情報から Terraform 用の yaml パラメーターファイルを生成するスクリプト。
 
 このスクリプトの役割:
 - GitHub Actions input を環境変数から受け取る
 - 会社名、会社コード、環境コード、管理グループIDを導出する
-- Terraform で作成する各種リソース名を生成する
+- Terraform で作成するリソース名を生成する
 - subscriptions/<subscription_name>.yaml を生成する
 - PR 作成 step で使う値を GITHUB_OUTPUT に出力する
+
+方針:
+- リソース名の命名は Terraform 側ではなく、このスクリプト側で行う
+- subscription_request には Jira 申請情報を原文で保持する
+- subscription_request 以外は Terraform が使う値を中心に出力する
 """
 
 import os
@@ -83,7 +88,7 @@ custom_appgw_subnet_cidr = env("CUSTOM_APPGW_SUBNET_CIDR")
 
 
 # 請求先会社から会社名と会社コードを抽出する。
-# 入力は パーソルホールディングス株式会社（PHD） を想定
+# 入力は パーソルホールディングス株式会社（PHD） を想定。
 billing_company_name = re.sub(r"（[^）]+）$", "", billing_company_raw)
 match = re.match(r"^.*（([^）]+)）$", billing_company_raw)
 billing_company_code = match.group(1) if match else billing_company_raw
@@ -105,7 +110,7 @@ else:
 # dev 環境では Hub Gateway を使わない。
 use_hub_gateway = "false" if env_code == "dev" else "true"
 
-# YAML の budget.enabled は boolean として出力。
+# YAML の budget.enabled は boolean として出力する。
 budget_alert_enabled = bool_string(budget_alert_enabled_raw)
 
 
@@ -137,6 +142,10 @@ budget_name = f"budget-{env_code}-{billing_company_code}-{service_name}"
 spoke_to_hub_peering_name = f"peer-{vnet_name}-to-hub"
 hub_to_spoke_peering_name = f"peer-hub-to-{vnet_name}"
 
+# Hub Gateway 側 Route Table に追加するルート名の prefix。
+# address_space が複数ある場合、Terraform 側で index を付けて使う想定。
+gateway_route_name_prefix = f"to-{vnet_name}"
+
 
 # =============================================================================
 # YAML 本文の生成
@@ -148,7 +157,8 @@ rbac_lines = "\n".join(
     [f'  - "{email}"' for email in unique_non_empty([subscription_owner_email, subscription_admin_email])]
 )
 
-# yamlの生成
+# subscription_request 以外は Terraform が使う値を中心に出力する。
+# workload_type は Terraform 側で Production をデフォルト値として扱うため出力しない。
 yaml_text = f'''subscription_name: "{subscription_name}"
 management_group_id: "{management_group_id}"
 location: "japaneast"
@@ -192,7 +202,7 @@ budget:
     - "{notification_email_2}"
 '''
 
-# パターンごとに生成する VNet のブロックを分岐。
+# パターンごとに生成する VNet ブロックを分岐する。
 # 構成パターン①は VNet なしなので virtual_network を出力しない。
 if "パターン②" in configuration_pattern:
     yaml_text += f'''
@@ -204,6 +214,7 @@ virtual_network:
   use_hub_gateway: {use_hub_gateway}
   spoke_to_hub_peering_name: "{spoke_to_hub_peering_name}"
   hub_to_spoke_peering_name: "{hub_to_spoke_peering_name}"
+  gateway_route_name_prefix: "{gateway_route_name_prefix}"
   subnets:
     - name: "ApplicationGatewaySubnet"
       address_prefix: "/24"
@@ -230,6 +241,7 @@ virtual_network:
   use_hub_gateway: {use_hub_gateway}
   spoke_to_hub_peering_name: "{spoke_to_hub_peering_name}"
   hub_to_spoke_peering_name: "{hub_to_spoke_peering_name}"
+  gateway_route_name_prefix: "{gateway_route_name_prefix}"
   subnets:
     - name: "ApplicationGatewaySubnet"
       address_prefix: "/24"
@@ -252,6 +264,7 @@ virtual_network:
   use_hub_gateway: {use_hub_gateway}
   spoke_to_hub_peering_name: "{spoke_to_hub_peering_name}"
   hub_to_spoke_peering_name: "{hub_to_spoke_peering_name}"
+  gateway_route_name_prefix: "{gateway_route_name_prefix}"
   subnets:
     - name: "ApplicationGatewaySubnet"
       address_prefix: "{custom_appgw_subnet_cidr}"
@@ -278,6 +291,7 @@ virtual_network:
   use_hub_gateway: {use_hub_gateway}
   spoke_to_hub_peering_name: "{spoke_to_hub_peering_name}"
   hub_to_spoke_peering_name: "{hub_to_spoke_peering_name}"
+  gateway_route_name_prefix: "{gateway_route_name_prefix}"
   subnets:
     - name: "ApplicationGatewaySubnet"
       address_prefix: "/24"

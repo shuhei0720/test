@@ -2,7 +2,7 @@
 # Subscription Creation
 # =============================================================================
 
-# YAMLに subscription_id がないものだけ新規サブスクリプションを作成
+# YAML に subscription_id がないものだけ新規サブスクリプションを作成
 resource "azurerm_subscription" "vending" {
   for_each = local.subscriptions_to_create
 
@@ -112,7 +112,7 @@ resource "azapi_resource" "spoke_action_group" {
   for_each = local.vending_with_alerts
 
   type      = "Microsoft.Insights/actionGroups@2023-01-01"
-  name      = "ag-health-${each.value.short_name}-${each.value.env_short_name}-01"
+  name      = each.value.action_group_name
   parent_id = "/subscriptions/${each.value.sub_id}/resourceGroups/${each.value.rg_name}"
   location  = "global"
   tags      = each.value.tags
@@ -141,7 +141,7 @@ resource "azapi_resource" "service_health" {
   for_each = local.vending_with_alerts
 
   type      = "Microsoft.Insights/activityLogAlerts@2020-10-01"
-  name      = "alr-health-${each.value.short_name}-${each.value.env_short_name}-01"
+  name      = each.value.alert_name
   parent_id = "/subscriptions/${each.value.sub_id}/resourceGroups/${each.value.rg_name}"
   location  = "global"
   tags      = each.value.tags
@@ -182,7 +182,7 @@ resource "azapi_resource" "service_health" {
 resource "azurerm_consumption_budget_subscription" "vending" {
   for_each = local.vending_with_budget
 
-  name            = "budget-${each.value.env_short_name}-${replace(each.value.subscription_name, "subscription_", "")}"
+  name            = each.value.name
   subscription_id = "/subscriptions/${each.value.sub_id}"
 
   amount     = each.value.amount
@@ -194,11 +194,11 @@ resource "azurerm_consumption_budget_subscription" "vending" {
 
   notification {
     enabled        = true
-    threshold      = 80
+    threshold      = each.value.threshold
     operator       = "GreaterThan"
     threshold_type = "Actual"
 
-    contact_emails = [for c in each.value.alert_contacts : c.email_address]
+    contact_emails = each.value.contact_emails
   }
 
   depends_on = [time_sleep.wait_for_subscription]
@@ -222,27 +222,27 @@ resource "azapi_resource" "vending_vnet" {
   location  = each.value.location
   tags      = each.value.tags
 
-body = {
-  properties = merge(
-    {
-      addressSpace = {
-        addressPrefixes = each.value.address_space
-      }
-    },
-    try(length(each.value.hub.hub_dns_servers), 0) > 0 ? {
-      dhcpOptions = {
-        dnsServers = each.value.hub.hub_dns_servers
-      }
-    } : {}
-  )
-}
+  body = {
+    properties = merge(
+      {
+        addressSpace = {
+          addressPrefixes = each.value.address_space
+        }
+      },
+      try(length(each.value.hub.hub_dns_servers), 0) > 0 ? {
+        dhcpOptions = {
+          dnsServers = each.value.hub.hub_dns_servers
+        }
+      } : {}
+    )
+  }
 
   depends_on = [azapi_resource.vending_resource_groups]
 
   lifecycle { ignore_changes = all }
 }
 
-# DNSサーバーだけは別PATCHで管理
+# DNS サーバーだけは別 PATCH で管理
 resource "azapi_update_resource" "vending_vnet_dns" {
   for_each = {
     for k, v in local.vending_with_vnet : k => v
@@ -539,7 +539,7 @@ resource "azapi_resource" "vending_subnets" {
 #   for_each = local.vending_with_peering
 
 #   type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
-#   name      = "peer-${each.value.vnet_name}-to-hub"
+#   name      = each.value.spoke_to_hub_peering_name
 #   parent_id = azapi_resource.vending_vnet[each.key].id
 
 #   body = {
@@ -570,7 +570,7 @@ resource "azapi_resource" "vending_subnets" {
 #   for_each = local.vending_with_peering
 
 #   type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
-#   name      = "peer-hub-to-${each.value.vnet_name}"
+#   name      = each.value.hub_to_spoke_peering_name
 #   parent_id = "${each.value.hub.hub_virtual_network_parent_id}/providers/Microsoft.Network/virtualNetworks/${each.value.hub.hub_virtual_network_name}"
 
 #   body = {
