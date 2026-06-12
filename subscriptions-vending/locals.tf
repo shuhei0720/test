@@ -3,27 +3,24 @@ locals {
   subscription_yaml_files = fileset(var.subscription_vending_path, "*.yaml")
 
   # YAML をそのまま map 化
-  # key は YAML ファイル名から .yaml を除いた値になる
   subscriptions_raw = {
     for f in local.subscription_yaml_files :
     trimsuffix(f, ".yaml") => yamldecode(file("${var.subscription_vending_path}/${f}"))
   }
 
-  # 新規作成対象
-  # YAML に subscription_id がないものは、新規サブスクリプション作成対象
+  # 新規作成対象（subscription_id 未指定）
   subscriptions_to_create = {
     for k, v in local.subscriptions_raw : k => v
     if try(v.subscription_id, null) == null
   }
 
-  # 既存サブスクリプション対象
-  # YAML に subscription_id があるものは、既存サブスクリプションとして扱う
+  # 既存サブスク（subscription_id 指定済み）
   subscriptions_with_ids = {
     for k, v in local.subscriptions_raw : k => v
     if try(v.subscription_id, null) != null
   }
 
-  # YAML から Terraform で使う値を整理する
+  # YAML から使う値を整理
   subscriptions = {
     for k, v in local.subscriptions_raw : k => {
       subscription_name   = v.subscription_name
@@ -33,30 +30,22 @@ locals {
       env_short_name      = v.env_short_name
       tags                = try(v.tags, {})
 
-      # 課金スコープ
-      # enrollment_account_id は YAML には持たせず、tfvars の cost_center 対応表から取得する
       enrollment_account_id = var.enrollment_account_id_map[v.tags.cost_center]
       billing_scope_id      = "/providers/Microsoft.Billing/billingAccounts/6d92e1a7-44ef-5b9d-fe85-600e31fecd27:7ffb2b72-d71a-46c2-ac74-10566d437c9e_2019-05-31/billingProfiles/KXVV-QQVV-BG7-PGB/invoiceSections/b5316415-c236-41e7-8237-fcf186346a73"
 
-      # Resource Group
       network_rg_name     = v.resource_groups.network.name
       network_rg_location = try(v.resource_groups.network.location, v.location)
       alert_rg_name       = v.resource_groups.alert.name
       alert_rg_location   = try(v.resource_groups.alert.location, v.location)
 
-      # 申請情報から参照するサービス名
       service_name       = try(v.subscription_request.service_name, k)
       service_short_name = try(v.subscription_request.service_short_name, k)
 
-      # RBAC
-      # 空文字は除外する
       rbac_assignments = [for x in try(v.rbac_assignments, []) : x if trimspace(x) != ""]
 
-      # 監視、予算
       alerts = try(v.alerts, null)
       budget = try(v.budget, null)
 
-      # VNet 情報
       vnet_name       = try(v.virtual_network.name, null)
       vnet_rg_name    = try(v.virtual_network.resource_group_name, null)
       address_space   = try(v.virtual_network.address_space, [])
@@ -64,177 +53,169 @@ locals {
       has_peering     = try(v.virtual_network.hub_peering_enabled, false)
       use_hub_gateway = try(v.virtual_network.use_hub_gateway, false)
 
-      # Peering 名
-      # リソース名は jira-dispatch 側で生成し、YAML からそのまま受け取る
       spoke_to_hub_peering_name = try(v.virtual_network.spoke_to_hub_peering_name, null)
       hub_to_spoke_peering_name = try(v.virtual_network.hub_to_spoke_peering_name, null)
 
-      # RT / NSG 名
-      # リソース名は Terraform 側で組み立てず、YAML から取得する
+      # サブネットを先頭から自動採番して CIDR 化
+      # address_prefix に CIDR が指定されている場合はそのまま使用
+      # address_prefix に /24 のようなプレフィックス長だけ指定されている場合は address_space[0] から自動計算
+      subnets = [
+        for idx, s in try(v.virtual_network.subnets, []) : {
+          name                        = s.name
+          route_table_name            = try(s.route_table_name, null)
+          network_security_group_name = try(s.network_security_group_name, null)
+          effective_address_prefix = try(
+            s.address_range,
+            can(cidrhost(s.address_prefix, 0)) ? s.address_prefix : cidrsubnet(
+              v.virtual_network.address_space[0],
+              tonumber(replace(s.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+              ceil(sum(concat([
+                0
+                ], [
+                for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                pow(
+                  2,
+                  tonumber(replace(s.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                )
+              ])))
+            )
+          )
+        }
+      ]
+
+      # 特定サブネットを名前で引けるようにする
+      firewall_subnet = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              can(cidrhost(sn.address_prefix, 0)) ? sn.address_prefix : cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : s if s.name == "AzureFirewallSubnet"
+      ]), null)
+
+      agw_subnet = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              can(cidrhost(sn.address_prefix, 0)) ? sn.address_prefix : cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : s if s.name == "ApplicationGatewaySubnet"
+      ]), null)
+
+      private_subnet = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              can(cidrhost(sn.address_prefix, 0)) ? sn.address_prefix : cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : s if s.name == "PrivateSubnet"
+      ]), null)
+
+      protect_subnet = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              can(cidrhost(sn.address_prefix, 0)) ? sn.address_prefix : cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : s if s.name == "ProtectSubnet"
+      ]), null)
+
+      # AzureFirewallSubnet の 4番目のIPを Spoke FW IP として使う
+      spoke_fw_ip = try(one([
+        for s in [
+          for idx, sn in try(v.virtual_network.subnets, []) : {
+            name = sn.name
+            effective_address_prefix = try(
+              sn.address_range,
+              can(cidrhost(sn.address_prefix, 0)) ? sn.address_prefix : cidrsubnet(
+                v.virtual_network.address_space[0],
+                tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
+                ceil(sum(concat([
+                  0
+                  ], [
+                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
+                  pow(
+                    2,
+                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
+                  )
+                ])))
+              )
+            )
+          }
+        ] : cidrhost(s.effective_address_prefix, 4) if s.name == "AzureFirewallSubnet"
+      ]), null)
+
       rt_agw_name      = try(one([for s in try(v.virtual_network.subnets, []) : s.route_table_name if s.name == "ApplicationGatewaySubnet"]), null)
       rt_private_name  = try(one([for s in try(v.virtual_network.subnets, []) : s.route_table_name if s.name == "PrivateSubnet"]), null)
       rt_protect_name  = try(one([for s in try(v.virtual_network.subnets, []) : s.route_table_name if s.name == "ProtectSubnet"]), null)
       nsg_private_name = try(one([for s in try(v.virtual_network.subnets, []) : s.network_security_group_name if s.name == "PrivateSubnet"]), null)
       nsg_protect_name = try(one([for s in try(v.virtual_network.subnets, []) : s.network_security_group_name if s.name == "ProtectSubnet"]), null)
 
-      # Hub 情報
-      # env_short_name をキーに tfvars の hub_environments から取得する
       hub = var.hub_environments[v.env_short_name]
-
-      # サブネットを先頭から自動採番して CIDR 化する
-      # 前提:
-      # - VNet の address_space[0] は 10.x.x.x/23 のようなフル CIDR
-      # - Subnet の address_prefix は /24, /26, /27 のようなプレフィックス長のみ
-      # - YAML の subnets 定義順に、address_space[0] の先頭から CIDR を割り当てる
-      subnets = [
-        for idx, s in try(v.virtual_network.subnets, []) : {
-          name                        = s.name
-          route_table_name            = try(s.route_table_name, null)
-          network_security_group_name = try(s.network_security_group_name, null)
-          effective_address_prefix = cidrsubnet(
-            v.virtual_network.address_space[0],
-            tonumber(replace(s.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-            sum(concat(
-              [0],
-              [
-                for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-                pow(
-                  2,
-                  tonumber(replace(s.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-                )
-              ]
-            ))
-          )
-        }
-      ]
-
-      # AzureFirewallSubnet を取得する
-      # 名前自体を知るためではなく、以下の目的で取得している:
-      # - AzureFirewallSubnet が存在するか判定する
-      # - 自動計算後の CIDR を取得する
-      # - spoke_fw_ip の計算に使う
-      firewall_subnet = try(one([
-        for s in [
-          for idx, sn in try(v.virtual_network.subnets, []) : {
-            name = sn.name
-            effective_address_prefix = cidrsubnet(
-              v.virtual_network.address_space[0],
-              tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-              sum(concat(
-                [0],
-                [
-                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-                  pow(
-                    2,
-                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-                  )
-                ]
-              ))
-            )
-          }
-        ] : s if s.name == "AzureFirewallSubnet"
-      ]), null)
-
-      # ApplicationGatewaySubnet を取得する
-      # 後続の Route Table 作成やルート設定の条件判定、CIDR 参照に使う
-      agw_subnet = try(one([
-        for s in [
-          for idx, sn in try(v.virtual_network.subnets, []) : {
-            name = sn.name
-            effective_address_prefix = cidrsubnet(
-              v.virtual_network.address_space[0],
-              tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-              sum(concat(
-                [0],
-                [
-                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-                  pow(
-                    2,
-                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-                  )
-                ]
-              ))
-            )
-          }
-        ] : s if s.name == "ApplicationGatewaySubnet"
-      ]), null)
-
-      # PrivateSubnet を取得する
-      # 後続の NSG / Route Table 作成、NSG ルール、ルート設定の CIDR 参照に使う
-      private_subnet = try(one([
-        for s in [
-          for idx, sn in try(v.virtual_network.subnets, []) : {
-            name = sn.name
-            effective_address_prefix = cidrsubnet(
-              v.virtual_network.address_space[0],
-              tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-              sum(concat(
-                [0],
-                [
-                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-                  pow(
-                    2,
-                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-                  )
-                ]
-              ))
-            )
-          }
-        ] : s if s.name == "PrivateSubnet"
-      ]), null)
-
-      # ProtectSubnet を取得する
-      # 構成パターンによって存在しない場合があるため、null 許容で取得する
-      protect_subnet = try(one([
-        for s in [
-          for idx, sn in try(v.virtual_network.subnets, []) : {
-            name = sn.name
-            effective_address_prefix = cidrsubnet(
-              v.virtual_network.address_space[0],
-              tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-              sum(concat(
-                [0],
-                [
-                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-                  pow(
-                    2,
-                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-                  )
-                ]
-              ))
-            )
-          }
-        ] : s if s.name == "ProtectSubnet"
-      ]), null)
-
-      # AzureFirewallSubnet の 4 番目の IP を Spoke Firewall の IP として使う
-      # AzureFirewallSubnet が存在しない構成では null になる
-      spoke_fw_ip = try(one([
-        for s in [
-          for idx, sn in try(v.virtual_network.subnets, []) : {
-            name = sn.name
-            effective_address_prefix = cidrsubnet(
-              v.virtual_network.address_space[0],
-              tonumber(replace(sn.address_prefix, "/", "")) - tonumber(split("/", v.virtual_network.address_space[0])[1]),
-              sum(concat(
-                [0],
-                [
-                  for prev in slice(try(v.virtual_network.subnets, []), 0, idx) :
-                  pow(
-                    2,
-                    tonumber(replace(sn.address_prefix, "/", "")) - tonumber(replace(prev.address_prefix, "/", ""))
-                  )
-                ]
-              ))
-            )
-          }
-        ] : cidrhost(s.effective_address_prefix, 4) if s.name == "AzureFirewallSubnet"
-      ]), null)
     }
   }
 
   # 新規作成後も含めた subscription_id の確定値
-  # 既存サブスクは YAML の subscription_id、新規作成は azurerm_subscription の結果を使う
   resolved_subscription_ids = {
     for k, v in local.subscriptions_raw : k => (
       try(v.subscription_id, null) != null
@@ -243,7 +224,7 @@ locals {
     )
   }
 
-  # RBAC 付与用
+  # RBAC付与用
   vending_with_rbac = {
     for k, v in local.subscriptions : k => {
       sub_id           = local.resolved_subscription_ids[k]
@@ -321,13 +302,13 @@ locals {
     } if v.has_vnet
   ]...)
 
-  # VNet ありのもの
+  # VNetありのもの
   vending_with_vnet = {
     for k, v in local.subscriptions : k => v
     if v.has_vnet
   }
 
-  # Peering ありのもの
+  # Peeringありのもの
   vending_with_peering = {
     for k, v in local.subscriptions : k => v
     if v.has_vnet && v.has_peering
