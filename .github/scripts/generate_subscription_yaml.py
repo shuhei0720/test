@@ -113,6 +113,11 @@ use_hub_gateway = "false" if env_code == "dev" else "true"
 # YAML の budget.enabled は boolean として出力する。
 budget_alert_enabled = bool_string(budget_alert_enabled_raw)
 
+# パターン②③⑤では、CUSTOM_VNET_CIDR が指定されている場合はそのフル CIDR を使う。
+# 未指定の場合は従来どおり /23 を使う。
+# パターン④はカスタム CIDR 前提のため、このフォールバック値は使わない。
+vnet_address_space = custom_vnet_cidr if custom_vnet_cidr else "/23"
+
 
 # =============================================================================
 # リソース名の生成
@@ -143,7 +148,6 @@ spoke_to_hub_peering_name = f"peer-{vnet_name}-to-hub"
 hub_to_spoke_peering_name = f"peer-hub-to-{vnet_name}"
 
 # Hub Gateway 側 Route Table に追加するルート名の prefix。
-# address_space が複数ある場合、Terraform 側で index を付けて使う想定。
 gateway_route_name_prefix = f"to-{vnet_name}"
 
 
@@ -157,8 +161,6 @@ rbac_lines = "\n".join(
     [f'  - "{email}"' for email in unique_non_empty([subscription_owner_email, subscription_admin_email])]
 )
 
-# subscription_request 以外は Terraform が使う値を中心に出力する。
-# workload_type は Terraform 側で Production をデフォルト値として扱うため出力しない。
 yaml_text = f'''subscription_name: "{subscription_name}"
 management_group_id: "{management_group_id}"
 location: "japaneast"
@@ -209,7 +211,7 @@ if "パターン②" in configuration_pattern:
 virtual_network:
   name: "{vnet_name}"
   resource_group_name: "{rg_network_name}"
-  address_space: ["/23"]
+  address_space: ["{vnet_address_space}"]
   hub_peering_enabled: true
   use_hub_gateway: {use_hub_gateway}
   spoke_to_hub_peering_name: "{spoke_to_hub_peering_name}"
@@ -236,7 +238,7 @@ elif "パターン③" in configuration_pattern:
 virtual_network:
   name: "{vnet_name}"
   resource_group_name: "{rg_network_name}"
-  address_space: ["/23"]
+  address_space: ["{vnet_address_space}"]
   hub_peering_enabled: true
   use_hub_gateway: {use_hub_gateway}
   spoke_to_hub_peering_name: "{spoke_to_hub_peering_name}"
@@ -286,7 +288,7 @@ elif "パターン⑤" in configuration_pattern:
 virtual_network:
   name: "{vnet_name}"
   resource_group_name: "{rg_network_name}"
-  address_space: ["/23"]
+  address_space: ["{vnet_address_space}"]
   hub_peering_enabled: true
   use_hub_gateway: {use_hub_gateway}
   spoke_to_hub_peering_name: "{spoke_to_hub_peering_name}"
