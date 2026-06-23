@@ -21,7 +21,7 @@ locals {
     if try(v.subscription_id, null) != null
   }
 
-  # サブネット CIDR を一度だけ計算する
+  # サブネット CIDR を計算する
   # key は subscription_key/subnet_name
   calculated_subnets = merge([
     for subscription_key, subscription in local.subscriptions_raw : {
@@ -54,7 +54,6 @@ locals {
   ]...)
 
   # サブスクリプションごとに、サブネット名で計算済みサブネットを引けるようにする
-  # 例: local.calculated_subnets_by_name["subscription_xxx"]["PrivateSubnet"]
   calculated_subnets_by_name = {
     for subscription_key in keys(local.subscriptions_raw) : subscription_key => {
       for subnet_key, subnet in local.calculated_subnets :
@@ -76,24 +75,19 @@ locals {
       # billing_scope_id は現在の課金スコープを固定で使用する
       billing_scope_id = "/providers/Microsoft.Billing/billingAccounts/6d92e1a7-44ef-5b9d-fe85-600e31fecd27:7ffb2b72-d71a-46c2-ac74-10566d437c9e_2019-05-31/billingProfiles/KXVV-QQVV-BG7-PGB/invoiceSections/b5316415-c236-41e7-8237-fcf186346a73"
 
-      # Resource Group
       network_rg_name     = v.resource_groups.network.name
       network_rg_location = try(v.resource_groups.network.location, v.location)
       alert_rg_name       = v.resource_groups.alert.name
       alert_rg_location   = try(v.resource_groups.alert.location, v.location)
 
-      # subscription_request は申請情報保持用だが、サービス略称は一部の fallback で使う
       service_name       = try(v.subscription_request.service_name, k)
       service_short_name = try(v.subscription_request.service_short_name, k)
 
-      # RBAC
       rbac_assignments = [for x in try(v.rbac_assignments, []) : x if trimspace(x) != ""]
 
-      # Alert / Budget は YAML の値をそのまま利用する
       alerts = try(v.alerts, null)
       budget = try(v.budget, null)
 
-      # VNet
       vnet_name       = try(v.virtual_network.name, null)
       vnet_rg_name    = try(v.virtual_network.resource_group_name, null)
       address_space   = try(v.virtual_network.address_space, [])
@@ -101,34 +95,28 @@ locals {
       has_peering     = try(v.virtual_network.hub_peering_enabled, false)
       use_hub_gateway = try(v.virtual_network.use_hub_gateway, false)
 
-      # Peering / Gateway route 名は jira-dispatch 側で生成した値を使う
       spoke_to_hub_peering_name = try(v.virtual_network.spoke_to_hub_peering_name, null)
       hub_to_spoke_peering_name = try(v.virtual_network.hub_to_spoke_peering_name, null)
       gateway_route_name_prefix = try(v.virtual_network.gateway_route_name_prefix, null)
 
-      # RT / NSG 名は YAML の subnet 定義から取得する
       rt_agw_name      = try(local.calculated_subnets_by_name[k]["ApplicationGatewaySubnet"].route_table_name, null)
       rt_private_name  = try(local.calculated_subnets_by_name[k]["PrivateSubnet"].route_table_name, null)
       rt_protect_name  = try(local.calculated_subnets_by_name[k]["ProtectSubnet"].route_table_name, null)
       nsg_private_name = try(local.calculated_subnets_by_name[k]["PrivateSubnet"].network_security_group_name, null)
       nsg_protect_name = try(local.calculated_subnets_by_name[k]["ProtectSubnet"].network_security_group_name, null)
 
-      # 計算済みサブネット一覧
       subnets = [
         for subnet_key, subnet in local.calculated_subnets : subnet
         if subnet.subscription_key == k
       ]
 
-      # 後続リソースで使う主要サブネット
       firewall_subnet = try(local.calculated_subnets_by_name[k]["AzureFirewallSubnet"], null)
       agw_subnet      = try(local.calculated_subnets_by_name[k]["ApplicationGatewaySubnet"], null)
       private_subnet  = try(local.calculated_subnets_by_name[k]["PrivateSubnet"], null)
       protect_subnet  = try(local.calculated_subnets_by_name[k]["ProtectSubnet"], null)
 
-      # AzureFirewallSubnet の 4番目の IP を Spoke FW IP として使う
       spoke_fw_ip = try(cidrhost(local.calculated_subnets_by_name[k]["AzureFirewallSubnet"].effective_address_prefix, 4), null)
 
-      # Hub 情報
       hub = var.hub_environments[v.env_short_name]
     }
   }
@@ -142,7 +130,7 @@ locals {
     )
   }
 
-  # RBAC 付与用
+  # RBAC付与用
   vending_with_rbac = {
     for k, v in local.subscriptions : k => {
       sub_id           = local.resolved_subscription_ids[k]
@@ -151,7 +139,7 @@ locals {
     if length(v.rbac_assignments) > 0
   }
 
-  # RG 作成用
+  # RG 用の for_each map
   vending_resource_groups = merge([
     for k, v in local.subscriptions : {
       "${k}/network" = {
@@ -171,7 +159,7 @@ locals {
     }
   ]...)
 
-  # Health Alert 作成用
+  # 通知系用
   vending_with_alerts = {
     for k, v in local.subscriptions : k => {
       sub_id            = local.resolved_subscription_ids[k]
@@ -191,7 +179,7 @@ locals {
     && length(try(v.alerts.contacts, [])) > 0
   }
 
-  # Budget Alert 作成用
+  # 予算アラート用
   vending_with_budget = {
     for k, v in local.subscriptions : k => {
       sub_id         = local.resolved_subscription_ids[k]
@@ -237,7 +225,7 @@ locals {
   }
 
   # Hub Gateway 側に追加する Spoke ルート
-  # ルート名の prefix は jira-dispatch 側で生成した gateway_route_name_prefix を使う
+  # GatewaySubnet Route Table routes は現時点では未実装だが、再有効化時に利用する
   vending_spoke_routes = flatten([
     for k, v in local.subscriptions : [
       for i, cidr in v.address_space : {
@@ -262,6 +250,7 @@ locals {
   }
 
   # ApplicationGatewaySubnet 用 Route Table 作成対象
+  # パターン⑤は AzureFirewallSubnet がなく spoke_fw_ip が null になるため対象外
   vending_rt_agw = {
     for k, v in local.subscriptions : k => v
     if v.agw_subnet != null && v.private_subnet != null && v.spoke_fw_ip != null && v.rt_agw_name != null
@@ -280,6 +269,7 @@ locals {
   }
 
   # ER なし環境では gateway route を作らない
+  # GatewaySubnet Route Table routes は現時点では未実装
   vending_spoke_routes_with_gateway = {
     for r in local.vending_spoke_routes : r.key => r
     if try(var.hub_environments[r.env_short_name].hub_gateway_route_table_resource_group_name, null) != null

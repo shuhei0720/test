@@ -2,7 +2,7 @@
 # Subscription Creation
 # =============================================================================
 
-# YAML に subscription_id がないものだけ新規サブスクリプションを作成
+# YAMLに subscription_id がないものだけ新規サブスクリプションを作成
 resource "azurerm_subscription" "vending" {
   for_each = local.subscriptions_to_create
 
@@ -242,7 +242,7 @@ resource "azapi_resource" "vending_vnet" {
   lifecycle { ignore_changes = all }
 }
 
-# DNS サーバーだけは別 PATCH で管理
+# DNSサーバーだけは別PATCHで管理
 resource "azapi_update_resource" "vending_vnet_dns" {
   for_each = {
     for k, v in local.vending_with_vnet : k => v
@@ -489,7 +489,7 @@ resource "azapi_resource" "vending_subnets" {
         addressPrefix         = each.value.effective_address_prefix
         defaultOutboundAccess = false
       },
-      each.value.name == "ApplicationGatewaySubnet" ? {
+      each.value.name == "ApplicationGatewaySubnet" && contains(keys(azapi_resource.vending_rt_agw), each.value.sub_key) ? {
         routeTable = {
           id = azapi_resource.vending_rt_agw[each.value.sub_key].id
         }
@@ -531,67 +531,67 @@ resource "azapi_resource" "vending_subnets" {
   lifecycle { ignore_changes = all }
 }
 
-# # =============================================================================
-# # Spoke -> Hub Peering
-# # =============================================================================
+# =============================================================================
+# Spoke -> Hub Peering
+# =============================================================================
 
-# resource "azapi_resource" "vending_spoke_to_hub" {
-#   for_each = local.vending_with_peering
+resource "azapi_resource" "vending_spoke_to_hub" {
+  for_each = local.vending_with_peering
 
-#   type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
-#   name      = each.value.spoke_to_hub_peering_name
-#   parent_id = azapi_resource.vending_vnet[each.key].id
+  type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
+  name      = each.value.spoke_to_hub_peering_name
+  parent_id = azapi_resource.vending_vnet[each.key].id
 
-#   body = {
-#     properties = {
-#       remoteVirtualNetwork = {
-#         id = each.value.hub.hub_virtual_network_id
-#       }
-#       allowForwardedTraffic     = true
-#       allowVirtualNetworkAccess = true
-#       useRemoteGateways         = each.value.use_hub_gateway
-#     }
-#   }
+  body = {
+    properties = {
+      remoteVirtualNetwork = {
+        id = each.value.hub.hub_virtual_network_id
+      }
+      allowForwardedTraffic     = true
+      allowVirtualNetworkAccess = true
+      useRemoteGateways         = each.value.use_hub_gateway
+    }
+  }
 
-#   retry = {
-#     error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress", "RemoteVnetHasNoGateways"]
-#     interval_seconds     = 30
-#     max_interval_seconds = 300
-#   }
+  retry = {
+    error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress", "RemoteVnetHasNoGateways"]
+    interval_seconds     = 30
+    max_interval_seconds = 300
+  }
 
-#   depends_on = [azapi_resource.vending_subnets]
-# }
+  depends_on = [azapi_resource.vending_subnets]
+}
 
-# # =============================================================================
-# # Hub -> Spoke Peering
-# # =============================================================================
+# =============================================================================
+# Hub -> Spoke Peering
+# =============================================================================
 
-# resource "azapi_resource" "vending_hub_to_spoke" {
-#   for_each = local.vending_with_peering
+resource "azapi_resource" "vending_hub_to_spoke" {
+  for_each = local.vending_with_peering
 
-#   type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
-#   name      = each.value.hub_to_spoke_peering_name
-#   parent_id = "${each.value.hub.hub_virtual_network_parent_id}/providers/Microsoft.Network/virtualNetworks/${each.value.hub.hub_virtual_network_name}"
+  type      = "Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-01-01"
+  name      = each.value.hub_to_spoke_peering_name
+  parent_id = "${each.value.hub.hub_virtual_network_parent_id}/providers/Microsoft.Network/virtualNetworks/${each.value.hub.hub_virtual_network_name}"
 
-#   body = {
-#     properties = {
-#       remoteVirtualNetwork = {
-#         id = azapi_resource.vending_vnet[each.key].id
-#       }
-#       allowForwardedTraffic     = true
-#       allowVirtualNetworkAccess = true
-#       allowGatewayTransit       = true
-#     }
-#   }
+  body = {
+    properties = {
+      remoteVirtualNetwork = {
+        id = azapi_resource.vending_vnet[each.key].id
+      }
+      allowForwardedTraffic     = true
+      allowVirtualNetworkAccess = true
+      allowGatewayTransit       = true
+    }
+  }
 
-#   retry = {
-#     error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress"]
-#     interval_seconds     = 30
-#     max_interval_seconds = 300
-#   }
+  retry = {
+    error_message_regex  = ["ReferencedResourceNotProvisioned", "InUseSubnetCannotBeUpdated", "AnotherOperationInProgress"]
+    interval_seconds     = 30
+    max_interval_seconds = 300
+  }
 
-#   depends_on = [azapi_resource.vending_subnets]
-# }
+  depends_on = [azapi_resource.vending_subnets]
+}
 
 # # =============================================================================
 # # GatewaySubnet Route Table routes

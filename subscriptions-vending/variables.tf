@@ -9,9 +9,9 @@ variable "billing_account_id" {
   type        = string
 }
 
-variable "enrollment_account_id_map" {
-  description = "cost_center から enrollmentAccountId へ変換するマップ"
-  type        = map(string)
+variable "enrollment_account_id" {
+  description = "EA の enrollmentAccountId"
+  type        = string
 }
 
 variable "terraform_state_storage_account_id" {
@@ -31,6 +31,5 @@ variable "hub_environments" {
     hub_dns_servers                             = optional(list(string))
     hub_gateway_route_table_resource_group_name = optional(string)
     hub_gateway_route_table_name                = optional(string)
-    spoke_ipam_pool_id                          = optional(string)
   }))
 }

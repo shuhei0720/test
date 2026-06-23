@@ -3,16 +3,10 @@
 Jira 申請情報から Terraform 用の yaml パラメーターファイルを生成するスクリプト。
 
 このスクリプトの役割:
-- GitHub Actions input を環境変数から受け取る
-- 会社名、会社コード、環境コード、管理グループIDを導出する
-- Terraform で作成するリソース名を生成する
+- GitHub Actions の input を環境変数から受け取る
+- Terraform で作成する変数を生成する
 - subscriptions/<subscription_name>.yaml を生成する
 - PR 作成 step で使う値を GITHUB_OUTPUT に出力する
-
-方針:
-- リソース名の命名は Terraform 側ではなく、このスクリプト側で行う
-- subscription_request には Jira 申請情報を原文で保持する
-- subscription_request 以外は Terraform が使う値を中心に出力する
 """
 
 import os
