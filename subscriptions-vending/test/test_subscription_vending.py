@@ -15,7 +15,7 @@ if not AZ_CMD:
     raise RuntimeError("Azure CLI (az) が見つかりません")
 
 YAML_PATH = sys.argv[1] if len(sys.argv) > 1 else "./subscriptions-vending/subscriptions/subscription_dev_PHD_tftest002.yaml"
-TFVARS_PATH = os.getenv("TFVARS_PATH", "./subscriptions-vending/terraform.tfvars")
+TFVARS_PATH = os.getenv("TFVARS_PATH", "")
 BILLING_ACCOUNT_ID = os.getenv("BILLING_ACCOUNT_ID", "71561797")
 EXPECTED_ENROLLMENT_ACCOUNT_ID = os.getenv("EXPECTED_ENROLLMENT_ACCOUNT_ID", "")
 EXPECTED_ROLE = os.getenv("EXPECTED_ROLE", "User Access Administrator")
@@ -136,22 +136,62 @@ def calculate_subnet_cidrs(vnet_cidr: str, subnets: list[dict]) -> dict[str, str
     return result
 
 
+def find_tfvars_path() -> str:
+    """GitHub Actions / ローカル実行のどちらでも terraform.tfvars を探せるようにする。"""
+    candidates = []
+
+    if TFVARS_PATH:
+        candidates.append(TFVARS_PATH)
+
+    candidates.extend([
+        "./subscriptions-vending/terraform.tfvars",
+        "./terraform.tfvars",
+    ])
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+
+    return ""
+
+
+def extract_hcl_object_body(text: str, object_name: str) -> str:
+    """HCL の object_name = { ... } ブロック本文を波括弧の対応で取得する。"""
+    match = re.search(rf"^\s*{re.escape(object_name)}\s*=\s*\{{", text, re.MULTILINE)
+    if not match:
+        return ""
+
+    start = match.end()
+    depth = 1
+    i = start
+
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+        i += 1
+
+    return ""
+
+
 def load_hub_environment(tfvars_path: str, env_short_name: str) -> dict:
     """terraform.tfvars の hub_environments から対象環境の Hub 情報を取得する。"""
-    if not os.path.exists(tfvars_path):
+    resolved_path = tfvars_path or find_tfvars_path()
+    if not resolved_path:
         return {}
 
-    text = Path(tfvars_path).read_text(encoding="utf-8")
-
-    env_block_match = re.search(
-        rf"{re.escape(env_short_name)}\s*=\s*\{{(?P<body>.*?)\n\s*\}}",
-        text,
-        re.DOTALL,
-    )
-    if not env_block_match:
+    text = Path(resolved_path).read_text(encoding="utf-8")
+    hub_envs_body = extract_hcl_object_body(text, "hub_environments")
+    if not hub_envs_body:
         return {}
 
-    body = env_block_match.group("body")
+    env_body = extract_hcl_object_body(hub_envs_body, env_short_name)
+    if not env_body:
+        return {}
+
     result = {}
 
     for key in [
@@ -163,11 +203,11 @@ def load_hub_environment(tfvars_path: str, env_short_name: str) -> dict:
         "hub_gateway_route_table_resource_group_name",
         "hub_gateway_route_table_name",
     ]:
-        match = re.search(rf'{key}\s*=\s*"([^"]+)"', body)
+        match = re.search(rf'{key}\s*=\s*"([^"]+)"', env_body)
         if match:
             result[key] = match.group(1)
 
-    dns_match = re.search(r"hub_dns_servers\s*=\s*\[(.*?)\]", body, re.DOTALL)
+    dns_match = re.search(r"hub_dns_servers\s*=\s*\[(.*?)\]", env_body, re.DOTALL)
     if dns_match:
         result["hub_dns_servers"] = re.findall(r'"([^"]+)"', dns_match.group(1))
 
@@ -175,7 +215,7 @@ def load_hub_environment(tfvars_path: str, env_short_name: str) -> dict:
 
 
 def has_network_test_target() -> bool:
-    return bool(subscription_id and has_vnet)
+    return bool(subscription_id and has_vnet and network_context)
 
 
 with open(YAML_PATH, "r", encoding="utf-8") as f:
@@ -343,9 +383,16 @@ try:
         scopes = props.get("scopes", [])
         action_groups = props.get("actions", {}).get("actionGroups", [])
         actual_ag_ids = [x.get("actionGroupId", "") for x in action_groups]
+        actual_ag_names = [x.split("/")[-1] for x in actual_ag_ids]
 
-        ok = props.get("enabled") is True and f"/subscriptions/{subscription_id}" in scopes and any(action_group_id.lower() == x.lower() for x in actual_ag_ids)
-        add_result("Service Health Alert確認", ok, f"enabled=True, scope=/subscriptions/{subscription_id}, actionGroup={alerts['action_group_name']}", f"enabled={props.get('enabled')}, scopes={scopes}, actionGroups={actual_ag_ids}", "Service Health Alert が期待通り設定されています" if ok else "Service Health Alert の設定が期待値と一致しません")
+        ok = props.get("enabled") is True and f"/subscriptions/{subscription_id}" in scopes and alerts["action_group_name"] in actual_ag_names
+        add_result(
+            "Service Health Alert確認",
+            ok,
+            f"enabled=True, scope=/subscriptions/{subscription_id}, actionGroup={alerts['action_group_name']}",
+            f"enabled={props.get('enabled')}, scope=/subscriptions/{subscription_id}, actionGroup={', '.join(actual_ag_names)}",
+            "Service Health Alert が期待通り設定されています" if ok else "Service Health Alert の設定が期待値と一致しません",
+        )
 except Exception as e:
     add_result("Health Alert確認", False, "Action Group / Service Health Alert", str(e), "Health Alert確認中にエラーが発生しました")
 
@@ -363,8 +410,20 @@ try:
             add_result("Budget確認", False, budget["name"], "未検出", "期待する Budget が見つかりません")
         else:
             amount = matched.get("amount")
-            ok = float(amount) == float(budget["amount"])
-            add_result("Budget確認", ok, f"name={budget['name']}, amount={budget['amount']}", f"name={matched.get('name')}, amount={amount}", "Budget が期待通り設定されています" if ok else "Budget の金額が一致しません")
+            expected_amount = float(budget["amount"])
+            actual_amount = float(amount)
+            ok = actual_amount == expected_amount
+
+            expected_amount_text = int(expected_amount) if expected_amount.is_integer() else expected_amount
+            actual_amount_text = int(actual_amount) if actual_amount.is_integer() else actual_amount
+
+            add_result(
+                "Budget確認",
+                ok,
+                f"name={budget['name']}, amount={expected_amount_text}",
+                f"name={matched.get('name')}, amount={actual_amount_text}",
+                "Budget が期待通り設定されています" if ok else "Budget の金額が一致しません",
+            )
 except Exception as e:
     add_result("Budget確認", False, "Budget", str(e), "Budget確認中にエラーが発生しました")
 
@@ -495,20 +554,24 @@ try:
             expected_nsg = subnet.get("network_security_group_name")
             if expected_nsg:
                 actual_nsg_id = props.get("networkSecurityGroup", {}).get("id", "")
-                checks.append(actual_nsg_id.lower().endswith(f"/networksecuritygroups/{expected_nsg}".lower()))
+                actual_nsg_name = actual_nsg_id.split("/")[-1] if actual_nsg_id else ""
+                checks.append(actual_nsg_name.lower() == expected_nsg.lower())
                 expected_parts.append(f"nsg={expected_nsg}")
-                actual_parts.append(f"nsg_id={actual_nsg_id}")
+                actual_parts.append(f"nsg={actual_nsg_name}")
 
             expected_rt = subnet.get("route_table_name")
             if expected_rt:
                 actual_rt_id = props.get("routeTable", {}).get("id", "")
+                actual_rt_name = actual_rt_id.split("/")[-1] if actual_rt_id else ""
+
                 if subnet_name == "ApplicationGatewaySubnet" and get_subnet(config, "AzureFirewallSubnet") is None:
                     checks.append(actual_rt_id == "")
                     expected_parts.append("routeTable=なし")
+                    actual_parts.append("routeTable=なし" if actual_rt_id == "" else f"routeTable={actual_rt_name}")
                 else:
-                    checks.append(actual_rt_id.lower().endswith(f"/routetables/{expected_rt}".lower()))
+                    checks.append(actual_rt_name.lower() == expected_rt.lower())
                     expected_parts.append(f"routeTable={expected_rt}")
-                actual_parts.append(f"routeTable_id={actual_rt_id}")
+                    actual_parts.append(f"routeTable={actual_rt_name}")
 
             ok = all(checks)
             add_result(
@@ -544,14 +607,14 @@ try:
             ok = (
                 spoke_peering.get("name") == spoke_peering_name
                 and actual_remote_id.lower() == expected_hub_vnet_id.lower()
-                and props.get("allowForwardedTraffic") is True
+                and props.get("allowForwardedTraffic") == virtual_network.get("use_hub_gateway", False)
                 and props.get("allowVirtualNetworkAccess") is True
                 and props.get("useRemoteGateways") == virtual_network.get("use_hub_gateway", False)
             )
             add_result(
                 "Spoke -> Hub Peering確認",
                 ok,
-                f"name={spoke_peering_name}, remote={expected_hub_vnet_id}, useRemoteGateways={virtual_network.get('use_hub_gateway', False)}",
+                f"name={spoke_peering_name}, remote={expected_hub_vnet_id}, allowForwardedTraffic={virtual_network.get('use_hub_gateway', False)}, allowVirtualNetworkAccess=True, useRemoteGateways={virtual_network.get('use_hub_gateway', False)}",
                 f"name={spoke_peering.get('name')}, remote={actual_remote_id}, allowForwardedTraffic={props.get('allowForwardedTraffic')}, allowVirtualNetworkAccess={props.get('allowVirtualNetworkAccess')}, useRemoteGateways={props.get('useRemoteGateways')}",
                 "Spoke -> Hub Peering が期待通り設定されています" if ok else "Spoke -> Hub Peering の設定が期待値と一致しません",
             )
@@ -567,6 +630,7 @@ try:
     else:
         hub_peering_name = virtual_network.get("hub_to_spoke_peering_name")
         hub_vnet_id = HUB_ENVIRONMENT.get("hub_virtual_network_id", "")
+        use_hub_gateway = virtual_network.get("use_hub_gateway", False)
 
         if not hub_peering_name:
             add_result("Hub -> Spoke Peering確認", False, "hub_to_spoke_peering_name", "未指定", "YAML に hub_to_spoke_peering_name がありません")
@@ -581,14 +645,14 @@ try:
             ok = (
                 hub_peering.get("name") == hub_peering_name
                 and actual_remote_id.lower() == network_context["vnet_id"].lower()
-                and props.get("allowForwardedTraffic") is True
+                and props.get("allowForwardedTraffic") == use_hub_gateway
                 and props.get("allowVirtualNetworkAccess") is True
-                and props.get("allowGatewayTransit") is True
+                and props.get("allowGatewayTransit") == use_hub_gateway
             )
             add_result(
                 "Hub -> Spoke Peering確認",
                 ok,
-                f"name={hub_peering_name}, remote={network_context['vnet_id']}, allowGatewayTransit=True",
+                f"name={hub_peering_name}, remote={network_context['vnet_id']}, allowForwardedTraffic={use_hub_gateway}, allowVirtualNetworkAccess=True, allowGatewayTransit={use_hub_gateway}",
                 f"name={hub_peering.get('name')}, remote={actual_remote_id}, allowForwardedTraffic={props.get('allowForwardedTraffic')}, allowVirtualNetworkAccess={props.get('allowVirtualNetworkAccess')}, allowGatewayTransit={props.get('allowGatewayTransit')}",
                 "Hub -> Spoke Peering が期待通り設定されています" if ok else "Hub -> Spoke Peering の設定が期待値と一致しません",
             )

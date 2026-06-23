@@ -29,7 +29,7 @@ alerts:
     - name: "subscription-owner"
       email_address: "shuhei.furusawa@grcore.com"
     - name: "subscription-owner2"
-      email_address: "shuhei.furusawa2@grcore.com"
+      email_address: "shuhei.furusawa3@grcore.com"
 
 budget:
   enabled: true
