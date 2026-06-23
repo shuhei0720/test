@@ -102,6 +102,20 @@ def get_subnet(config: dict, subnet_name: str):
     return None
 
 
+def get_rule_by_name(rules: list[dict], name: str):
+    for rule in rules:
+        if rule.get("name") == name:
+            return rule
+    return None
+
+
+def get_route_by_name(routes: list[dict], name: str):
+    for route in routes:
+        if route.get("name") == name:
+            return route
+    return None
+
+
 def cidr_prefix_to_int(prefix: str) -> int:
     return int(prefix.replace("/", ""))
 
@@ -137,7 +151,6 @@ def calculate_subnet_cidrs(vnet_cidr: str, subnets: list[dict]) -> dict[str, str
 
 
 def find_tfvars_path() -> str:
-    """GitHub Actions / ローカル実行のどちらでも terraform.tfvars を探せるようにする。"""
     candidates = []
 
     if TFVARS_PATH:
@@ -156,7 +169,6 @@ def find_tfvars_path() -> str:
 
 
 def extract_hcl_object_body(text: str, object_name: str) -> str:
-    """HCL の object_name = { ... } ブロック本文を波括弧の対応で取得する。"""
     match = re.search(rf"^\s*{re.escape(object_name)}\s*=\s*\{{", text, re.MULTILINE)
     if not match:
         return ""
@@ -178,7 +190,6 @@ def extract_hcl_object_body(text: str, object_name: str) -> str:
 
 
 def load_hub_environment(tfvars_path: str, env_short_name: str) -> dict:
-    """terraform.tfvars の hub_environments から対象環境の Hub 情報を取得する。"""
     resolved_path = tfvars_path or find_tfvars_path()
     if not resolved_path:
         return {}
@@ -456,15 +467,30 @@ try:
         add_result("VNet確認", True, "virtual_network 未指定時はスキップ", "スキップ", "virtual_network がない、または subscription_id 未取得のため確認対象外です")
     else:
         vnet = arm_get(arm_url(network_context["vnet_id"], "2024-01-01"))
-        actual_address_space = sorted(vnet.get("properties", {}).get("addressSpace", {}).get("addressPrefixes", []))
+        props = vnet.get("properties", {})
+
+        actual_address_space = sorted(props.get("addressSpace", {}).get("addressPrefixes", []))
         expected_address_space = network_context["expected_address_space"]
 
+        expected_dns_servers = sorted(HUB_ENVIRONMENT.get("hub_dns_servers", []))
+        actual_dns_servers = sorted(props.get("dhcpOptions", {}).get("dnsServers", []))
+
+        checks = [actual_address_space == expected_address_space]
+        expected_parts = [f"addressSpace={', '.join(expected_address_space)}"]
+        actual_parts = [f"addressSpace={', '.join(actual_address_space)}"]
+
+        if expected_dns_servers:
+            checks.append(actual_dns_servers == expected_dns_servers)
+            expected_parts.append(f"dnsServers={', '.join(expected_dns_servers)}")
+            actual_parts.append(f"dnsServers={', '.join(actual_dns_servers)}")
+
+        ok = all(checks)
         add_result(
             "VNet確認",
-            actual_address_space == expected_address_space,
-            ", ".join(expected_address_space),
-            ", ".join(actual_address_space),
-            "VNet の address space が一致しました" if actual_address_space == expected_address_space else "VNet の address space が一致しません",
+            ok,
+            ", ".join(expected_parts),
+            ", ".join(actual_parts),
+            "VNet の設定が期待通りです" if ok else "VNet の設定が期待値と一致しません",
         )
 except Exception as e:
     add_result("VNet確認", False, "VNet", str(e), "VNet確認中にエラーが発生しました")
@@ -477,6 +503,8 @@ try:
         add_result("NSG確認", True, "virtual_network 未指定時はスキップ", "スキップ", "virtual_network がない、または subscription_id 未取得のため確認対象外です")
     else:
         checked = False
+        expected_private_cidr = network_context["expected_subnet_cidrs"].get("PrivateSubnet", "")
+
         for subnet in virtual_network.get("subnets", []):
             nsg_name = subnet.get("network_security_group_name")
             if not nsg_name:
@@ -485,12 +513,85 @@ try:
             checked = True
             nsg_id = arm_id(subscription_id, network_context["vnet_rg"], f"Microsoft.Network/networkSecurityGroups/{nsg_name}")
             nsg = arm_get(arm_url(nsg_id, "2024-01-01"))
+            rules = nsg.get("properties", {}).get("securityRules", [])
+
+            checks = [nsg.get("name") == nsg_name]
+            expected_parts = [f"name={nsg_name}"]
+            actual_parts = [f"name={nsg.get('name')}"]
+
+            if subnet["name"] == "PrivateSubnet":
+                allow_rule = get_rule_by_name(rules, "AllowPrivateInbound")
+                deny_rule = get_rule_by_name(rules, "DenyAllInbound")
+
+                checks.append(allow_rule is not None)
+                checks.append(deny_rule is not None)
+
+                if allow_rule:
+                    p = allow_rule.get("properties", {})
+                    checks.extend([
+                        p.get("priority") == 100,
+                        p.get("direction") == "Inbound",
+                        p.get("access") == "Allow",
+                        p.get("protocol") == "*",
+                        sorted(p.get("sourceAddressPrefixes", [])) == sorted(["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]),
+                        p.get("destinationAddressPrefix") == "*",
+                    ])
+                    actual_parts.append(f"AllowPrivateInbound(priority={p.get('priority')}, access={p.get('access')}, direction={p.get('direction')})")
+
+                if deny_rule:
+                    p = deny_rule.get("properties", {})
+                    checks.extend([
+                        p.get("priority") == 200,
+                        p.get("direction") == "Inbound",
+                        p.get("access") == "Deny",
+                        p.get("protocol") == "*",
+                        p.get("sourceAddressPrefix") == "*",
+                        p.get("destinationAddressPrefix") == "*",
+                    ])
+                    actual_parts.append(f"DenyAllInbound(priority={p.get('priority')}, access={p.get('access')}, direction={p.get('direction')})")
+
+                expected_parts.append("AllowPrivateInbound / DenyAllInbound")
+
+            if subnet["name"] == "ProtectSubnet":
+                allow_rule = get_rule_by_name(rules, "AllowFromPrivateSubnet")
+                deny_rule = get_rule_by_name(rules, "DenyAllInbound")
+
+                checks.append(allow_rule is not None)
+                checks.append(deny_rule is not None)
+
+                if allow_rule:
+                    p = allow_rule.get("properties", {})
+                    checks.extend([
+                        p.get("priority") == 100,
+                        p.get("direction") == "Inbound",
+                        p.get("access") == "Allow",
+                        p.get("protocol") == "*",
+                        p.get("sourceAddressPrefix") == expected_private_cidr,
+                        p.get("destinationAddressPrefix") == "*",
+                    ])
+                    actual_parts.append(f"AllowFromPrivateSubnet(source={p.get('sourceAddressPrefix')})")
+
+                if deny_rule:
+                    p = deny_rule.get("properties", {})
+                    checks.extend([
+                        p.get("priority") == 200,
+                        p.get("direction") == "Inbound",
+                        p.get("access") == "Deny",
+                        p.get("protocol") == "*",
+                        p.get("sourceAddressPrefix") == "*",
+                        p.get("destinationAddressPrefix") == "*",
+                    ])
+                    actual_parts.append(f"DenyAllInbound(priority={p.get('priority')}, access={p.get('access')}, direction={p.get('direction')})")
+
+                expected_parts.append(f"AllowFromPrivateSubnet(source={expected_private_cidr}) / DenyAllInbound")
+
+            ok = all(checks)
             add_result(
                 f"NSG確認({nsg_name})",
-                nsg.get("name") == nsg_name,
-                nsg_name,
-                nsg.get("name"),
-                "NSG が存在しました" if nsg.get("name") == nsg_name else "NSG が見つかりません",
+                ok,
+                ", ".join(expected_parts),
+                ", ".join(actual_parts),
+                "NSG の securityRules が期待通りです" if ok else "NSG の securityRules が期待値と一致しません",
             )
 
         if not checked:
@@ -506,24 +607,103 @@ try:
         add_result("Route Table確認", True, "virtual_network 未指定時はスキップ", "スキップ", "virtual_network がない、または subscription_id 未取得のため確認対象外です")
     else:
         checked = False
+        expected_private_cidr = network_context["expected_subnet_cidrs"].get("PrivateSubnet", "")
+        expected_agw_cidr = network_context["expected_subnet_cidrs"].get("ApplicationGatewaySubnet", "")
+
         for subnet in virtual_network.get("subnets", []):
             rt_name = subnet.get("route_table_name")
             if not rt_name:
                 continue
 
-            # パターン⑤では AzureFirewallSubnet がなく、ApplicationGatewaySubnet 用 RT は作成しない
             if subnet["name"] == "ApplicationGatewaySubnet" and get_subnet(config, "AzureFirewallSubnet") is None:
                 continue
 
             checked = True
             rt_id = arm_id(subscription_id, network_context["vnet_rg"], f"Microsoft.Network/routeTables/{rt_name}")
             rt = arm_get(arm_url(rt_id, "2024-01-01"))
+            props = rt.get("properties", {})
+            routes = props.get("routes", [])
+
+            checks = [rt.get("name") == rt_name]
+            expected_parts = [f"name={rt_name}"]
+            actual_parts = [f"name={rt.get('name')}"]
+
+            if subnet["name"] == "ApplicationGatewaySubnet":
+                route = get_route_by_name(routes, "ToFW")
+                checks.append(route is not None)
+
+                if route:
+                    p = route.get("properties", {})
+                    expected_spoke_fw_ip = ""
+                    firewall_cidr = network_context["expected_subnet_cidrs"].get("AzureFirewallSubnet")
+                    if firewall_cidr:
+                        fw_base_ip = firewall_cidr.split("/")[0]
+                        expected_spoke_fw_ip = int_to_ip(ip_to_int(fw_base_ip) + 4)
+
+                    checks.extend([
+                        p.get("addressPrefix") == expected_private_cidr,
+                        p.get("nextHopType") == "VirtualAppliance",
+                        p.get("nextHopIpAddress") == expected_spoke_fw_ip,
+                    ])
+                    expected_parts.append(f"ToFW(addressPrefix={expected_private_cidr}, nextHop={expected_spoke_fw_ip})")
+                    actual_parts.append(f"ToFW(addressPrefix={p.get('addressPrefix')}, nextHop={p.get('nextHopIpAddress')})")
+
+            if subnet["name"] == "PrivateSubnet":
+                default_route = get_route_by_name(routes, "Default")
+                to_afw_route = get_route_by_name(routes, "toAFW")
+                checks.append(default_route is not None)
+
+                if default_route:
+                    p = default_route.get("properties", {})
+                    checks.extend([
+                        props.get("disableBgpRoutePropagation") is True,
+                        p.get("addressPrefix") == "0.0.0.0/0",
+                        p.get("nextHopType") == "VirtualAppliance",
+                        p.get("nextHopIpAddress") == HUB_ENVIRONMENT.get("hub_firewall_private_ip"),
+                    ])
+                    expected_parts.append(f"Default(0.0.0.0/0 -> {HUB_ENVIRONMENT.get('hub_firewall_private_ip')})")
+                    actual_parts.append(f"Default({p.get('addressPrefix')} -> {p.get('nextHopIpAddress')})")
+
+                if get_subnet(config, "AzureFirewallSubnet") is not None:
+                    checks.append(to_afw_route is not None)
+                    if to_afw_route:
+                        p = to_afw_route.get("properties", {})
+                        firewall_cidr = network_context["expected_subnet_cidrs"].get("AzureFirewallSubnet")
+                        expected_spoke_fw_ip = int_to_ip(ip_to_int(firewall_cidr.split("/")[0]) + 4)
+                        checks.extend([
+                            p.get("addressPrefix") == expected_agw_cidr,
+                            p.get("nextHopType") == "VirtualAppliance",
+                            p.get("nextHopIpAddress") == expected_spoke_fw_ip,
+                        ])
+                        expected_parts.append(f"toAFW(addressPrefix={expected_agw_cidr}, nextHop={expected_spoke_fw_ip})")
+                        actual_parts.append(f"toAFW(addressPrefix={p.get('addressPrefix')}, nextHop={p.get('nextHopIpAddress')})")
+                else:
+                    checks.append(to_afw_route is None)
+                    expected_parts.append("toAFW=なし")
+                    actual_parts.append("toAFW=なし" if to_afw_route is None else "toAFW=あり")
+
+            if subnet["name"] == "ProtectSubnet":
+                default_route = get_route_by_name(routes, "Default")
+                checks.append(default_route is not None)
+
+                if default_route:
+                    p = default_route.get("properties", {})
+                    checks.extend([
+                        props.get("disableBgpRoutePropagation") is True,
+                        p.get("addressPrefix") == "0.0.0.0/0",
+                        p.get("nextHopType") == "VirtualAppliance",
+                        p.get("nextHopIpAddress") == HUB_ENVIRONMENT.get("hub_firewall_private_ip"),
+                    ])
+                    expected_parts.append(f"Default(0.0.0.0/0 -> {HUB_ENVIRONMENT.get('hub_firewall_private_ip')})")
+                    actual_parts.append(f"Default({p.get('addressPrefix')} -> {p.get('nextHopIpAddress')})")
+
+            ok = all(checks)
             add_result(
                 f"Route Table確認({rt_name})",
-                rt.get("name") == rt_name,
-                rt_name,
-                rt.get("name"),
-                "Route Table が存在しました" if rt.get("name") == rt_name else "Route Table が見つかりません",
+                ok,
+                ", ".join(expected_parts),
+                ", ".join(actual_parts),
+                "Route Table の routes が期待通りです" if ok else "Route Table の routes が期待値と一致しません",
             )
 
         if not checked:
