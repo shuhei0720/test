@@ -1,0 +1,84 @@
+subscription_name: "subscription_prod_PHD_fshuheitest02"
+management_group_id: "TEST-PHDInfraTeam"
+location: "japaneast"
+env_short_name: "prod"
+
+tags:
+  environment: "prod"
+  cost_center: "パーソルホールディングス株式会社"
+  owner: "shuhei.furusawa@grcore.com"
+  deployed_by: "Terraform"
+
+rbac_assignments:
+  - "shuhei70720_gmail.com#EXT#@shuhei70720gmail.onmicrosoft.com"
+
+resource_groups:
+  network:
+    name: "rg-fstest02-prod-network-01"
+    location: "japaneast"
+  alert:
+    name: "rg-fstest02-prod-alert-01"
+    location: "japaneast"
+
+alerts:
+  resource_group_name: "rg-fstest02-prod-alert-01"
+  action_group_name: "ag-health-fstest02-prod-01"
+  service_health_alert_name: "alr-health-fstest02-prod-01"
+  group_short_name: "fstest02prod"
+  contacts:
+    - name: "subscription-owner"
+      email_address: "shuhei.furusawa@grcore.com"
+    - name: "subscription-owner2"
+      email_address: "shuhei.furusawa@grcore.com"
+
+budget:
+  enabled: true
+  name: "budget-prod-PHD-fshuheitest02"
+  amount: 10000000
+  threshold: 80
+  contact_emails:
+    - "shuhei.furusawa@grcore.com"
+    - "shuhei.furusawa@grcore.com"
+
+virtual_network:
+  name: "vnet-fstest02-prod-network-01"
+  resource_group_name: "rg-fstest02-prod-network-01"
+  address_space: ["192.168.0.0/23"]
+  hub_peering_enabled: true
+  use_hub_gateway: true
+  spoke_to_hub_peering_name: "peer-vnet-fstest02-prod-network-01-to-hub"
+  hub_to_spoke_peering_name: "peer-hub-to-vnet-fstest02-prod-network-01"
+  gateway_route_name_prefix: "to-vnet-fstest02-prod-network-01"
+  subnets:
+    - name: "ApplicationGatewaySubnet"
+      address_prefix: "/24"
+      route_table_name: "rt-fstest02-prod-agw-01"
+    - name: "AzureFirewallSubnet"
+      address_prefix: "/26"
+    - name: "PrivateSubnet"
+      address_prefix: "/26"
+      route_table_name: "rt-fstest02-prod-private-01"
+      network_security_group_name: "nsg-fstest02-prod-private-01"
+    - name: "ProtectSubnet"
+      address_prefix: "/27"
+      route_table_name: "rt-fstest02-prod-protect-01"
+      network_security_group_name: "nsg-fstest02-prod-protect-01"
+
+subscription_request:
+  jira_issue_key: "AZP-782"
+  request_type: "作成"
+  subscription_owner_email: "shuhei.furusawa@grcore.com"
+  subscription_admin_email: "shuhei.furusawa@grcore.com"
+  notification_email_1: "shuhei.furusawa@grcore.com"
+  notification_email_2: "shuhei.furusawa@grcore.com"
+  budget: "10000000"
+  budget_alert_enabled: "はい"
+  billing_company_raw: "パーソルホールディングス株式会社（PHD）"
+  environment_raw: "本番環境"
+  configuration_pattern: "Azure上にシステムを構築する（パターン②：標準構成）"
+  custom_vnet_cidr: ""
+  custom_private_subnet_cidr: ""
+  custom_protect_subnet_cidr: ""
+  custom_appgw_subnet_cidr: ""
+  service_name: "fshuheitest02"
+  service_short_name: "fstest02"
