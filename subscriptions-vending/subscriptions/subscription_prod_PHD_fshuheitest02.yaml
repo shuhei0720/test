@@ -34,7 +34,7 @@ alerts:
 budget:
   enabled: true
   name: "budget-prod-PHD-fshuheitest02"
-  amount: 10000000
+  amount: 1000000000
   threshold: 80
   contact_emails:
     - "shuhei.furusawa@grcore.com"
