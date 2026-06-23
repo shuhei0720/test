@@ -547,8 +547,8 @@ resource "azapi_resource" "vending_spoke_to_hub" {
       remoteVirtualNetwork = {
         id = each.value.hub.hub_virtual_network_id
       }
-      allowForwardedTraffic     = true
       allowVirtualNetworkAccess = true
+      allowForwardedTraffic     = each.value.use_hub_gateway
       useRemoteGateways         = each.value.use_hub_gateway
     }
   }
@@ -578,9 +578,9 @@ resource "azapi_resource" "vending_hub_to_spoke" {
       remoteVirtualNetwork = {
         id = azapi_resource.vending_vnet[each.key].id
       }
-      allowForwardedTraffic     = true
       allowVirtualNetworkAccess = true
-      allowGatewayTransit       = true
+      allowForwardedTraffic     = each.value.use_hub_gateway
+      allowGatewayTransit       = each.value.use_hub_gateway
     }
   }
 
