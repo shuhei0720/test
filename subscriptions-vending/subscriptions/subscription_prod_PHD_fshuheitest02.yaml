@@ -38,14 +38,14 @@ budget:
   threshold: 80
   contact_emails:
     - "shuhei.furusawa@grcore.com"
-    - "shuhei.furusawa@grcore.com"
+    - "shuhei.furusawa2@grcore.com"
 
 virtual_network:
   name: "vnet-fstest02-prod-network-01"
   resource_group_name: "rg-fstest02-prod-network-01"
   address_space: ["192.168.0.0/23"]
   hub_peering_enabled: true
-  use_hub_gateway: true
+  use_hub_gateway: false
   spoke_to_hub_peering_name: "peer-vnet-fstest02-prod-network-01-to-hub"
   hub_to_spoke_peering_name: "peer-hub-to-vnet-fstest02-prod-network-01"
   gateway_route_name_prefix: "to-vnet-fstest02-prod-network-01"
