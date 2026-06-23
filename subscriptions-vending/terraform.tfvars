@@ -10,14 +10,14 @@ terraform_state_storage_account_id = ""
 # 環境ごとのHubの情報
 hub_environments = {
   prod = {
-    hub_subscription_id                         = "04fa21cc-4c6b-47cc-83f3-2c2ef7e3c8c8"
-    hub_virtual_network_id                      = "/subscriptions/04fa21cc-4c6b-47cc-83f3-2c2ef7e3c8c8/resourceGroups/rg-hub-prod-network-01/providers/Microsoft.Network/virtualNetworks/vnet-hub-prod-network-01"
+    hub_subscription_id                         = "ee22eea6-5c25-4941-b81a-05c3403b9002"
+    hub_virtual_network_id                      = "/subscriptions/ee22eea6-5c25-4941-b81a-05c3403b9002/resourceGroups/rg-hub-prod-network-01/providers/Microsoft.Network/virtualNetworks/vnet-hub-prod-network-01"
     hub_virtual_network_name                    = "vnet-hub-prod-network-01"
-    hub_virtual_network_parent_id               = "/subscriptions/04fa21cc-4c6b-47cc-83f3-2c2ef7e3c8c8/resourceGroups/rg-hub-prod-network-01"
+    hub_virtual_network_parent_id               = "/subscriptions/ee22eea6-5c25-4941-b81a-05c3403b9002/resourceGroups/rg-hub-prod-network-01"
     hub_firewall_private_ip                     = "10.204.0.4"
     hub_dns_servers                             = ["10.204.0.100"]
-    hub_gateway_route_table_resource_group_name = "rg-hub-prod-network-01"
-    hub_gateway_route_table_name                = "rt-hub-prod-vpngw-01"
+    # hub_gateway_route_table_resource_group_name = "rg-hub-prod-network-01"
+    # hub_gateway_route_table_name                = "rt-hub-prod-vpngw-01"
   }
 
   stg = {
