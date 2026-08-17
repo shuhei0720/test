@@ -31,6 +31,7 @@ jobs:
     outputs:
       has_changes: ${{ steps.plan.outputs.has_changes }}
       jira_issue_key: ${{ steps.jira.outputs.jira_issue_key }}
+      plan_artifact_name: ${{ steps.artifact_names.outputs.plan_artifact_name }}
 
     steps:
       - name: Checkout
@@ -60,18 +61,52 @@ jobs:
           echo "### ℹ️ Terraform skipped" >> "$GITHUB_STEP_SUMMARY"
           echo "パラメーターファイル がないため Plan / Apply をスキップしました。" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Restore previous tfstate artifact
+      - name: Set artifact names
+        id: artifact_names
         if: steps.jira.outputs.jira_issue_key != ''
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          github_token: ${{ github.token }}
-          workflow: terraform-cd.yml
-          workflow_conclusion: completed
-          branch: main
-          name: tfstate-${{ steps.jira.outputs.jira_issue_key }}
-          path: ${{ env.TERRAFORM_WORKING_DIR }}
-          if_no_artifact_found: warn
-          search_artifacts: true
+        shell: bash
+        run: |
+          echo "plan_artifact_name=terraform-plan-${{ steps.jira.outputs.jira_issue_key }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore latest tfstate artifact
+        if: steps.jira.outputs.jira_issue_key != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_PREFIX: tfstate-${{ steps.jira.outputs.jira_issue_key }}-
+        run: |
+          set -euo pipefail
+
+          ARTIFACT_ID=$(
+            gh api --paginate \
+              "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+              | jq -s --arg prefix "$ARTIFACT_PREFIX" '
+                  [
+                    .[].artifacts[]
+                    | select(.expired == false)
+                    | select(.name | startswith($prefix))
+                  ]
+                  | sort_by(.created_at)
+                  | reverse
+                  | .[0].id // empty
+                '
+          )
+
+          if [[ -z "$ARTIFACT_ID" ]]; then
+            echo "復元対象のtfstate Artifactはありません。初回実行として続行します。"
+            exit 0
+          fi
+
+          curl --fail --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --output tfstate-artifact.zip \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip"
+
+          unzip -o tfstate-artifact.zip -d "${TERRAFORM_WORKING_DIR}"
+          rm tfstate-artifact.zip
+
 
       - name: Azure Login (OIDC)
         if: steps.jira.outputs.jira_issue_key != ''
@@ -145,12 +180,13 @@ jobs:
         if: steps.jira.outputs.jira_issue_key != '' && steps.plan.outputs.has_changes == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: terraform-plan-${{ steps.jira.outputs.jira_issue_key }}
+          name: ${{ steps.artifact_names.outputs.plan_artifact_name }}
           path: |
             ${{ env.TERRAFORM_WORKING_DIR }}/tfplan
             ${{ env.TERRAFORM_WORKING_DIR }}/plan-output.txt
             ${{ env.TERRAFORM_WORKING_DIR }}/terraform.tfstate
             ${{ env.TERRAFORM_WORKING_DIR }}/terraform.tfstate.backup
+          if-no-files-found: ignore
           retention-days: 1
 
   apply:
@@ -194,7 +230,7 @@ jobs:
       - name: Download Plan Artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: terraform-plan-${{ needs.plan.outputs.jira_issue_key }}
+          name: ${{ needs.plan.outputs.plan_artifact_name }}
           path: ${{ env.TERRAFORM_WORKING_DIR }}
 
       - name: Terraform Apply
@@ -212,12 +248,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: tfstate-${{ needs.plan.outputs.jira_issue_key }}
+          name: tfstate-${{ needs.plan.outputs.jira_issue_key }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ env.TERRAFORM_WORKING_DIR }}/terraform.tfstate
             ${{ env.TERRAFORM_WORKING_DIR }}/terraform.tfstate.backup
+          if-no-files-found: warn
           retention-days: 30
-          overwrite: true
+
 
       - name: Wait before post-deploy tests
         if: steps.terraform_apply.outputs.exit_code == '0'
