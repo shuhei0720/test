@@ -49,31 +49,17 @@
             },
             {
               "field": "Microsoft.Storage/storageAccounts/networkAcls.bypass",
-              "notEquals": "AzureServices"
-            },
-            {
-              "count": {
-                "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*]"
-              },
-              "notEquals": 1
+              "notEquals": "None"
             },
             {
               "count": {
                 "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*]",
                 "where": {
-                  "allOf": [
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*].resourceId",
-                      "equals": "[parameters('allowedScannerResourceId')]"
-                    },
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*].tenantId",
-                      "equals": "[parameters('allowedScannerTenantId')]"
-                    }
-                  ]
+                  "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*].resourceId",
+                  "notContains": "/providers/Microsoft.Kusto/clusters/"
                 }
               },
-              "notEquals": 1
+              "greater": 0
             }
           ]
         }
@@ -83,20 +69,5 @@
       "effect": "Deny"
     }
   },
-  "parameters": {
-    "allowedScannerResourceId": {
-      "type": "String",
-      "metadata": {
-        "displayName": "許可するスキャナーのリソースID",
-        "description": "許可する storageDataScanner の完全なリソースIDを指定します。"
-      }
-    },
-    "allowedScannerTenantId": {
-      "type": "String",
-      "metadata": {
-        "displayName": "許可するスキャナーのテナントID",
-        "description": "許可するリソースインスタンスルールのテナントIDを指定します。"
-      }
-    }
-  }
+  "parameters": {}
 }
