@@ -1,0 +1,3 @@
+﻿SubscriptionName,ResourceGroup,StorageAccount,WorkspaceName,LogDestination
+subscription-name-1,rg-log-archive-01,stlogarchiveexample01,log-archive-01,Storage
+subscription-name-2,rg-log-archive-02,stlogarchiveexample02,log-archive-02,Log
