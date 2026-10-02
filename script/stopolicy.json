@@ -1,0 +1,102 @@
+{
+  "mode": "Indexed",
+  "policyRule": {
+    "if": {
+      "allOf": [
+        {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        {
+          "field": "name",
+          "like": "st*"
+        },
+        {
+          "field": "name",
+          "contains": "arch"
+        },
+        {
+          "field": "Microsoft.Storage/storageAccounts/publicNetworkAccess",
+          "notEquals": "Disabled"
+        },
+        {
+          "anyOf": [
+            {
+              "field": "Microsoft.Storage/storageAccounts/publicNetworkAccess",
+              "notEquals": "Enabled"
+            },
+            {
+              "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction",
+              "notEquals": "Deny"
+            },
+            {
+              "count": {
+                "field": "Microsoft.Storage/storageAccounts/networkAcls.virtualNetworkRules[*]"
+              },
+              "greater": 0
+            },
+            {
+              "count": {
+                "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]"
+              },
+              "greater": 0
+            },
+            {
+              "count": {
+                "field": "Microsoft.Storage/storageAccounts/networkAcls.ipv6Rules[*]"
+              },
+              "greater": 0
+            },
+            {
+              "field": "Microsoft.Storage/storageAccounts/networkAcls.bypass",
+              "notEquals": "AzureServices"
+            },
+            {
+              "count": {
+                "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*]"
+              },
+              "notEquals": 1
+            },
+            {
+              "count": {
+                "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*]",
+                "where": {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*].resourceId",
+                      "equals": "[parameters('allowedScannerResourceId')]"
+                    },
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*].tenantId",
+                      "equals": "[parameters('allowedScannerTenantId')]"
+                    }
+                  ]
+                }
+              },
+              "notEquals": 1
+            }
+          ]
+        }
+      ]
+    },
+    "then": {
+      "effect": "Deny"
+    }
+  },
+  "parameters": {
+    "allowedScannerResourceId": {
+      "type": "String",
+      "metadata": {
+        "displayName": "許可するスキャナーのリソースID",
+        "description": "許可する storageDataScanner の完全なリソースIDを指定します。"
+      }
+    },
+    "allowedScannerTenantId": {
+      "type": "String",
+      "metadata": {
+        "displayName": "許可するスキャナーのテナントID",
+        "description": "許可するリソースインスタンスルールのテナントIDを指定します。"
+      }
+    }
+  }
+}
