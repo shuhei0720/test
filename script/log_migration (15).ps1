@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $location = "japaneast"
 
 # ------------------------------------------------------------
@@ -35,7 +35,6 @@ $targets = @(foreach ($row in $rows) {
         StorageAccount   = ([string]$row.StorageAccount).Trim()
         WorkspaceName    = ([string]$row.WorkspaceName).Trim()
         LogDestination   = ([string]$row.LogDestination).Trim()
-        ExistingStorage  = $false
     }
 })
 
@@ -149,20 +148,7 @@ foreach ($target in $targets) {
             "--subscription", $target.SubscriptionId, "--name", $name
         )
         if ($result.nameAvailable -ne $true) {
-            if ($result.reason -ne "AlreadyExists") {
-                throw "名前を利用できません: $name / $($result.reason) / $($result.message)"
-            }
-            $accounts = Invoke-AzJson -Arguments @(
-                "storage", "account", "list", "--subscription", $target.SubscriptionId
-            )
-            $existing = $accounts | Where-Object { $_.id -eq $resourceId }
-            if (-not $existing) {
-                throw "指定先以外で使用済みのストレージ名です: $name"
-            }
-            if ($existing.location -ne $location) {
-                throw "既存ストレージのリージョン不一致: 既存=$($existing.location), 指定=$($location)"
-            }
-            $target.ExistingStorage = $true
+            throw "名前を利用できません: $name / $($result.reason) / $($result.message)"
         }
         Write-Host "名前確認OK: $($target.SubscriptionName) / $name"
     }
@@ -186,7 +172,7 @@ if (-not $precheckFailed) {
             # ------------------------------------------------------------
             # 必要なリソースプロバイダーを登録
             # ------------------------------------------------------------
-            foreach ($namespace in @("Microsoft.OperationalInsights", "Microsoft.Insights")) {
+            foreach ($namespace in @("Microsoft.OperationalInsights", "Microsoft.Insights", "Microsoft.Security")) {
                 $stage = "$namespace 登録"
                 $failedResourceId = "/subscriptions/$subscriptionId/providers/$namespace"
                 $provider = Invoke-AzJson -Arguments @(
@@ -213,26 +199,74 @@ if (-not $precheckFailed) {
             )
 
             # ------------------------------------------------------------
-            # ストレージを作成・更新し、パブリックネットワークアクセスを無効化
+            # ストレージのネットワーク、認証、暗号化、不変性サポートを設定
             # ------------------------------------------------------------
-            $stage = "ストレージ作成・設定"
+            $stage = "ストレージ作成"
             $failedResourceId = "$groupId/providers/Microsoft.Storage/storageAccounts/$($target.StorageAccount)"
-            $storageArguments = @(
-                "storage", "account",
-                $(if ($target.ExistingStorage) { "update" } else { "create" }),
+            $storage = Invoke-AzJson -Arguments @(
+                "storage", "account", "create",
                 "--subscription", $subscriptionId,
                 "--resource-group", $target.ResourceGroup,
                 "--name", $target.StorageAccount,
                 "--public-network-access", "Disabled",
-                "--default-action", "Deny", "--bypass", "AzureServices"
+                "--default-action", "Deny", "--bypass", "AzureServices",
+                "--allow-blob-public-access", "false",
+                "--allow-shared-key-access", "false",
+                "--https-only", "true", "--min-tls-version", "TLS1_2",
+                "--location", $location, "--kind", "StorageV2",
+                "--require-infrastructure-encryption", "true", "--enable-alw", "true"
             )
-            if (-not $target.ExistingStorage) {
-                $storageArguments += @("--location", $location)
-            }
-            $storage = Invoke-AzJson -Arguments $storageArguments
 
             # ------------------------------------------------------------
-            # VMログの送信先となるLog Analyticsワークスペースを作成
+            # Blobバージョン管理を有効化：不変ポリシーの期間・ロックは利用者が設定
+            # ------------------------------------------------------------
+            $stage = "Blobバージョン管理設定"
+            $failedResourceId = "$($storage.id)/blobServices/default"
+            $null = Invoke-AzJson -Arguments @(
+                "storage", "account", "blob-service-properties", "update",
+                "--subscription", $subscriptionId,
+                "--resource-group", $target.ResourceGroup,
+                "--account-name", $target.StorageAccount,
+                "--enable-versioning", "true"
+            )
+
+            # ------------------------------------------------------------
+            # ライフサイクル：追記Blobを最終更新から365日経過後に削除
+            # 階層移動、旧バージョン・スナップショットの処理は設定しない
+            # ------------------------------------------------------------
+            $stage = "ライフサイクル設定"
+            $failedResourceId = "$($storage.id)/managementPolicies/default"
+            $rules = @(
+                @{
+                    name = "log-append-365"
+                    enabled = $true
+                    type = "Lifecycle"
+                    definition = @{
+                        filters = @{ blobTypes = @("appendBlob") }
+                        actions = @{
+                            baseBlob = @{ delete = @{ daysAfterModificationGreaterThan = 365 } }
+                        }
+                    }
+                }
+            )
+            Set-ArmResource -ResourceId $failedResourceId -ApiVersion "2023-05-01" -Body @{
+                properties = @{ policy = @{ rules = $rules } }
+            }
+
+            # ------------------------------------------------------------
+            # ログ保管用ストレージ単位でDefender for Storageを無効化
+            # ------------------------------------------------------------
+            $stage = "Defender for Storage 設定"
+            $failedResourceId = "$($storage.id)/providers/Microsoft.Security/defenderForStorageSettings/current"
+            Set-ArmResource -ResourceId $failedResourceId -ApiVersion "2025-01-01" -Body @{
+                properties = @{
+                    isEnabled = $false
+                    overrideSubscriptionLevelSettings = $true
+                }
+            }
+
+            # ------------------------------------------------------------
+            # ログアナ：365日保持、公開アクセス有効、リソースまたはワークスペース権限
             # ------------------------------------------------------------
             $stage = "Log Analytics 作成"
             $failedResourceId = "$groupId/providers/Microsoft.OperationalInsights/workspaces/$($target.WorkspaceName)"
@@ -241,7 +275,14 @@ if (-not $precheckFailed) {
                 "--subscription", $subscriptionId,
                 "--resource-group", $target.ResourceGroup,
                 "--workspace-name", $target.WorkspaceName,
-                "--location", $location
+                "--location", $location, "--retention-time", "365",
+                "--ingestion-access", "Enabled", "--query-access", "Enabled"
+            )
+            $stage = "Log Analytics アクセス制御設定"
+            $null = Invoke-AzJson -Arguments @(
+                "resource", "update", "--subscription", $subscriptionId,
+                "--ids", $workspace.id, "--api-version", "2023-09-01",
+                "--set", "properties.features.enableLogAccessUsingOnlyResourcePermissions=true"
             )
 
             # ------------------------------------------------------------
@@ -428,11 +469,6 @@ if (-not $precheckFailed) {
                         )
 
                         if ($target.LogDestination -eq "Storage") {
-                            if ($resource.location -and
-                                $resource.location -ne "global" -and
-                                $resource.location -ne $storage.location) {
-                                throw "リージョン不一致: リソース=$($resource.location), ストレージ=$($storage.location)"
-                            }
                             $updateArguments += @(
                                 "--storage-account-id", $storage.id,
                                 "--set", "workspaceId=null", "logAnalyticsDestinationType=null"
