@@ -1,73 +1,117 @@
 {
-  "mode": "Indexed",
+  "mode": "All",
   "policyRule": {
     "if": {
       "allOf": [
         {
           "field": "type",
-          "equals": "Microsoft.Storage/storageAccounts"
+          "equals": "Microsoft.Storage/storageAccounts/managementPolicies"
         },
         {
-          "field": "name",
+          "value": "[first(split(field('fullName'), '/'))]",
           "like": "st*"
         },
         {
-          "field": "name",
+          "value": "[first(split(field('fullName'), '/'))]",
           "contains": "arch"
         },
         {
-          "field": "Microsoft.Storage/storageAccounts/publicNetworkAccess",
-          "notEquals": "Disabled"
-        },
-        {
-          "anyOf": [
-            {
-              "field": "Microsoft.Storage/storageAccounts/publicNetworkAccess",
-              "notEquals": "Enabled"
-            },
-            {
-              "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction",
-              "notEquals": "Deny"
-            },
-            {
-              "count": {
-                "field": "Microsoft.Storage/storageAccounts/networkAcls.virtualNetworkRules[*]"
-              },
-              "greater": 0
-            },
-            {
-              "count": {
-                "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]"
-              },
-              "greater": 0
-            },
-            {
-              "count": {
-                "field": "Microsoft.Storage/storageAccounts/networkAcls.ipv6Rules[*]"
-              },
-              "greater": 0
-            },
-            {
-              "field": "Microsoft.Storage/storageAccounts/networkAcls.bypass",
-              "notEquals": "None"
-            },
-            {
-              "count": {
-                "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*]",
-                "where": {
-                  "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*].resourceId",
-                  "notContains": "/providers/Microsoft.Kusto/clusters/"
+          "count": {
+            "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*]",
+            "where": {
+              "anyOf": [
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterModificationGreaterThan",
+                      "exists": "true"
+                    },
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterModificationGreaterThan",
+                      "less": "[parameters('minimumRetentionDays')]"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterCreationGreaterThan",
+                      "exists": "true"
+                    },
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterCreationGreaterThan",
+                      "less": "[parameters('minimumRetentionDays')]"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterLastAccessTimeGreaterThan",
+                      "exists": "true"
+                    },
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterLastAccessTimeGreaterThan",
+                      "less": "[parameters('minimumRetentionDays')]"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.snapshot.delete.daysAfterCreationGreaterThan",
+                      "exists": "true"
+                    },
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.snapshot.delete.daysAfterCreationGreaterThan",
+                      "less": "[parameters('minimumRetentionDays')]"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.version.delete.daysAfterCreationGreaterThan",
+                      "exists": "true"
+                    },
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.version.delete.daysAfterCreationGreaterThan",
+                      "less": "[parameters('minimumRetentionDays')]"
+                    }
+                  ]
                 }
-              },
-              "greater": 0
+              ]
             }
-          ]
+          },
+          "greater": 0
         }
       ]
     },
     "then": {
-      "effect": "Deny"
+      "effect": "[parameters('effect')]"
     }
   },
-  "parameters": {}
+  "parameters": {
+    "minimumRetentionDays": {
+      "type": "Integer",
+      "metadata": {
+        "displayName": "削除までの最小日数",
+        "description": "ログアーカイブ用ストレージのライフサイクル削除条件に設定できる最小日数です。この値未満の設定を拒否します。"
+      },
+      "defaultValue": 365
+    },
+    "effect": {
+      "type": "String",
+      "metadata": {
+        "displayName": "効果",
+        "description": "Denyは設定を拒否、Auditは非準拠として検出、Disabledは評価を無効化します。"
+      },
+      "allowedValues": [
+        "Deny",
+        "Audit",
+        "Disabled"
+      ],
+      "defaultValue": "Deny"
+    }
+  }
 }
