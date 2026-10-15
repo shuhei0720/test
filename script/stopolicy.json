@@ -1,117 +1,28 @@
 {
   "mode": "All",
+  "parameters": {},
   "policyRule": {
     "if": {
-      "allOf": [
-        {
-          "field": "type",
-          "equals": "Microsoft.Storage/storageAccounts/managementPolicies"
-        },
-        {
-          "value": "[first(split(field('fullName'), '/'))]",
-          "like": "st*"
-        },
-        {
-          "value": "[first(split(field('fullName'), '/'))]",
-          "contains": "arch"
-        },
-        {
-          "count": {
-            "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*]",
-            "where": {
-              "anyOf": [
-                {
-                  "allOf": [
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterModificationGreaterThan",
-                      "exists": "true"
-                    },
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterModificationGreaterThan",
-                      "less": "[parameters('minimumRetentionDays')]"
-                    }
-                  ]
-                },
-                {
-                  "allOf": [
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterCreationGreaterThan",
-                      "exists": "true"
-                    },
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterCreationGreaterThan",
-                      "less": "[parameters('minimumRetentionDays')]"
-                    }
-                  ]
-                },
-                {
-                  "allOf": [
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterLastAccessTimeGreaterThan",
-                      "exists": "true"
-                    },
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.baseBlob.delete.daysAfterLastAccessTimeGreaterThan",
-                      "less": "[parameters('minimumRetentionDays')]"
-                    }
-                  ]
-                },
-                {
-                  "allOf": [
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.snapshot.delete.daysAfterCreationGreaterThan",
-                      "exists": "true"
-                    },
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.snapshot.delete.daysAfterCreationGreaterThan",
-                      "less": "[parameters('minimumRetentionDays')]"
-                    }
-                  ]
-                },
-                {
-                  "allOf": [
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.version.delete.daysAfterCreationGreaterThan",
-                      "exists": "true"
-                    },
-                    {
-                      "field": "Microsoft.Storage/storageAccounts/managementPolicies/policy.rules[*].definition.actions.version.delete.daysAfterCreationGreaterThan",
-                      "less": "[parameters('minimumRetentionDays')]"
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          "greater": 0
-        }
-      ]
+      "field": "type",
+      "equals": "Microsoft.Compute/virtualMachines"
     },
     "then": {
-      "effect": "[parameters('effect')]"
-    }
-  },
-  "parameters": {
-    "minimumRetentionDays": {
-      "type": "Integer",
-      "metadata": {
-        "displayName": "削除までの最小日数",
-        "description": "ログアーカイブ用ストレージのライフサイクル削除条件に設定できる最小日数です。この値未満の設定を拒否します。"
-      },
-      "defaultValue": 365
-    },
-    "effect": {
-      "type": "String",
-      "metadata": {
-        "displayName": "効果",
-        "description": "Denyは設定を拒否、Auditは非準拠として検出、Disabledは評価を無効化します。"
-      },
-      "allowedValues": [
-        "Deny",
-        "Audit",
-        "Disabled"
-      ],
-      "defaultValue": "Deny"
+      "effect": "AuditIfNotExists",
+      "details": {
+        "type": "Microsoft.Insights/dataCollectionRuleAssociations",
+        "existenceCondition": {
+          "allOf": [
+            {
+              "field": "Microsoft.Insights/dataCollectionRuleAssociations/dataCollectionRuleId",
+              "exists": "true"
+            },
+            {
+              "field": "Microsoft.Insights/dataCollectionRuleAssociations/dataCollectionRuleId",
+              "notEquals": ""
+            }
+          ]
+        }
+      }
     }
   }
 }
