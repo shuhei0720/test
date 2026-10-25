@@ -1,6 +1,5 @@
 subscription_name: "subscription_prod_PHD_fshuheitest01"
-workload_type: "Production"
-management_group_id: "TEST-PHDInfraTeam"
+management_group_id: "Producrion"
 location: "japaneast"
 env_short_name: "prod"
 
@@ -11,7 +10,7 @@ tags:
   deployed_by: "Terraform"
 
 rbac_assignments:
-  - "shuhei70720_gmail.com#EXT#@shuhei70720gmail.onmicrosoft.com"
+  - "shuhei.furusawa@grcore.com"
 
 resource_groups:
   network:
@@ -44,11 +43,12 @@ budget:
 virtual_network:
   name: "vnet-fstest01-prod-network-01"
   resource_group_name: "rg-fstest01-prod-network-01"
-  address_space: ["192.168.0.0/23"]
+  address_space: ["/23"]
   hub_peering_enabled: true
   use_hub_gateway: true
   spoke_to_hub_peering_name: "peer-vnet-fstest01-prod-network-01-to-hub"
   hub_to_spoke_peering_name: "peer-hub-to-vnet-fstest01-prod-network-01"
+  gateway_route_name_prefix: "to-vnet-fstest01-prod-network-01"
   subnets:
     - name: "ApplicationGatewaySubnet"
       address_prefix: "/24"
