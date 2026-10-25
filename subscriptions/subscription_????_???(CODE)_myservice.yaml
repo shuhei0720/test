@@ -1,0 +1,46 @@
+subscription_name: "subscription_????_???(CODE)_myservice"
+workload_type: "Production"
+management_group_id: "????"
+location: "japaneast"
+env_short_name: "????"
+
+tags:
+  environment: "????"
+  cost_center: "???(CODE)"
+  owner: "a@example.com"
+  deployed_by: "Terraform"
+
+alert_contacts:
+  - name: "subscription-owner"
+    email_address: "c@example.com"
+  - name: "subscription-owner2"
+    email_address: "d@example.com"
+
+budget: "1000"
+
+rbac_assignments:
+  - "a@example.com"
+  - "b@example.com"
+
+resource_groups:
+  network:
+    name: "rg-ms-????-network-01"
+    location: "japaneast"
+  application:
+    name: "rg-ms-????-alert-01"
+    location: "japaneast"
+
+subscription_request:
+  jira_issue_key: "TEST-1"
+  request_type: "xxx"
+  subscription_owner_email: "a@example.com"
+  subscription_admin_email: "b@example.com"
+  notification_email_1: "c@example.com"
+  notification_email_2: "d@example.com"
+  budget: "1000"
+  budget_alert_enabled: "true"
+  billing_company_raw: "???(CODE)"
+  environment_raw: "????"
+  configuration_pattern: "?????"
+  service_name: "myservice"
+  service_short_name: "ms"
