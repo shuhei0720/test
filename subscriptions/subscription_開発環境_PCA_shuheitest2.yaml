@@ -1,0 +1,66 @@
+subscription_name: "subscription_開発環境_PCA_shuheitest2"
+workload_type: "Production"
+management_group_id: "開発環境"
+location: "japaneast"
+env_short_name: "開発環境"
+
+tags:
+  environment: "開発環境"
+  cost_center: "パーソルキャリア株式会社"
+  owner: "shuhei.furusawa@persol.co.jp"
+  deployed_by: "Terraform"
+
+alert_contacts:
+  - name: "subscription-owner"
+    email_address: "shuhei.furusawa@persol.co.jp"
+  - name: "subscription-owner2"
+    email_address: "takaya.ohashi@persol.co.jp"
+
+budget: "1000000000"
+
+rbac_assignments:
+  - "shuhei.furusawa@persol.co.jp"
+  - "takaya.ohashi@persol.co.jp"
+
+resource_groups:
+  network:
+    name: "rg-shtest-開発環境-network-01"
+    location: "japaneast"
+  application:
+    name: "rg-shtest-開発環境-alert-01"
+    location: "japaneast"
+
+virtual_network:
+  name: "vnet-shtest-開発環境-network-01"
+  resource_group_name: "rg-shtest-開発環境-network-01"
+  address_space: ["/23"]
+  hub_peering_enabled: true
+  use_hub_gateway: true
+  subnets:
+    - name: "ApplicationGatewaySubnet"
+      address_prefix: "/24"
+    - name: "AzureFirewallSubnet"
+      address_prefix: "/26"
+    - name: "PrivateSubnet"
+      address_prefix: "/26"
+    - name: "ProtectSubnet"
+      address_prefix: "/27"
+
+subscription_request:
+  jira_issue_key: "AZP-717"
+  request_type: "作成"
+  subscription_owner_email: "shuhei.furusawa@persol.co.jp"
+  subscription_admin_email: "takaya.ohashi@persol.co.jp"
+  notification_email_1: "shuhei.furusawa@persol.co.jp"
+  notification_email_2: "takaya.ohashi@persol.co.jp"
+  budget: "1000000000"
+  budget_alert_enabled: "はい"
+  billing_company_raw: "パーソルキャリア株式会社（PCA）"
+  environment_raw: "開発環境"
+  configuration_pattern: "Azure上にシステムを構築する（パターン④：カスタム構成）"
+  service_name: "shuheitest2"
+  service_short_name: "shtest"
+  custom_vnet_cidr: "/23"
+  custom_private_subnet_cidr: "/26"
+  custom_protect_subnet_cidr: "/27"
+  custom_appgw_subnet_cidr: "/24"
